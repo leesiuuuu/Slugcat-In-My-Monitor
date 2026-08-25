@@ -1,33 +1,48 @@
-## 요약
+## Summary
 
-<!-- 변경 목적과 사용자에게 보이는 결과를 간단히 설명해주세요. -->
-<!-- 일반 작업은 develop을 대상으로, 배포는 develop -> main으로 생성해주세요. -->
+<!-- Briefly describe the problem and the user-visible outcome. -->
+<!-- Target normal changes at develop. Use develop -> main only for releases. -->
 
-## 관련 이슈
+## Related issues
 
-<!-- 예: Closes #123 -->
+<!-- Example: Closes #123. Write "None" when there is no related issue. -->
 
-## 주요 변경 사항
+## Key changes
 
-- 변경 내용을 적어주세요.
+- Describe the change.
 
-## 검증
+## Scope and limitations
 
-<!-- 실행한 명령과 결과를 적어주세요. 실행하지 못한 검증이 있다면 이유를 설명해주세요. -->
+<!-- Note anything intentionally excluded, known limitations, and follow-up work. -->
+
+## Verification
+
+<!-- List the commands and results. Explain the reason and expected risk for checks not run. -->
 
 ```text
-npm test
+.\build.ps1 -Configuration Release
 ```
 
-## 스크린샷 또는 영상
+## Screenshots or recordings
 
-<!-- 시각적 변경이 있다면 첨부해주세요. 해당하지 않으면 삭제해도 됩니다. -->
+<!-- Include before-and-after evidence for visual changes. Write "Not applicable" otherwise. -->
 
-## 체크리스트
+## Dependencies, assets, and AI assistance
 
-- [ ] 변경 범위가 하나의 목적에 집중되어 있습니다.
-- [ ] 관련 테스트를 추가하거나 기존 테스트를 실행했습니다.
-- [ ] 사용자 동작이나 설정이 바뀌었다면 문서를 갱신했습니다.
-- [ ] 디버그 출력과 임시 파일을 제거했습니다.
-- [ ] 재배포 권한이 없는 Rain World 또는 제3자 에셋을 추가하지 않았습니다.
-- [ ] 새 의존성이나 외부 자료의 출처와 라이선스를 확인했습니다.
+<!--
+- New dependencies or third-party material: give the name, source, version, license, and distribution impact.
+- AI assistance: identify the tool and its scope, such as code, documentation, or design.
+- Write "None" when neither applies.
+-->
+
+## Checklist
+
+- [ ] This change is focused on one purpose.
+- [ ] I self-reviewed the diff and added relevant tests or ran the existing full test suite.
+- [ ] I documented checks not run and known risks above.
+- [ ] I updated documentation for changes to user behavior, settings, or compatibility.
+- [ ] I removed debug output, credentials, personal information, local paths, and temporary files.
+- [ ] I did not add Rain World or third-party assets without redistribution permission.
+- [ ] I verified the source and license of new dependencies and external material.
+- [ ] I reviewed AI-assisted output and disclosed its use and scope above.
+- [ ] I incorporated the latest `develop` and have no unresolved conflicts.
