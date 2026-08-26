@@ -22,6 +22,8 @@ namespace RainWorldDesktopPet.Graphics
         private readonly SlugcatPose renderPose;
         private readonly Random graphicsRandom = new Random();
         private readonly Vec2[,] drawPositions = new Vec2[2, 2];
+        private readonly Vec2[] crawlEdibleStart = new Vec2[2];
+        private readonly bool[] hasCrawlEdibleStart = new bool[2];
         private Vec2 lookDirection;
         private Vec2 lastLookDirection;
         private Vec2 originalLookDirection;
@@ -344,6 +346,81 @@ namespace RainWorldDesktopPet.Graphics
             }
             for (int i = 0; i < extensions.Length; i++)
                 extensions[i].Step(slugcat, lookDirection);
+        }
+
+        // SlugcatHand.Update's normal one-hand grasp pose. While eatCounter falls
+        // from 40 to 20, the original scales this target from the ordinary held
+        // position toward the raised eating position; values clamp after 20.
+        public void SetEdibleHandPose(int handIndex, int eatCounter)
+        {
+            if (handIndex < 0 || handIndex >= arms.Length)
+                throw new ArgumentOutOfRangeException("handIndex");
+            Limb hand = arms[handIndex];
+            if (slugcat.State.BodyMode == BodyModeIndex.Crawl)
+            {
+                if (!hasCrawlEdibleStart[handIndex] || eatCounter >= 40)
+                {
+                    crawlEdibleStart[handIndex] = hand.End.Position;
+                    hasCrawlEdibleStart[handIndex] = true;
+                }
+                double mouthProgress = MathUtil.InverseLerp(40.0, 20.0,
+                    eatCounter);
+                Vec2 mouthTarget = drawPositions[0, 0];
+                hand.Mode = LimbMode.HuntAbsolutePosition;
+                hand.AbsoluteHuntPosition = Vec2.Lerp(
+                    crawlEdibleStart[handIndex], mouthTarget, mouthProgress);
+                hand.TargetPosition = hand.AbsoluteHuntPosition;
+                hand.GripSurfaceId = 0;
+                hand.RetractCounter = Math.Max(0, hand.RetractCounter - 10);
+                return;
+            }
+            hasCrawlEdibleStart[handIndex] = false;
+            double scale = 1.0;
+            double verticalRaise = 0.0;
+            double horizontalSpread = 1.0;
+            if (eatCounter < 40)
+            {
+                double progress = MathUtil.InverseLerp(40.0, 20.0, eatCounter);
+                scale = MathUtil.Lerp(0.9, 0.7, progress);
+                verticalRaise = MathUtil.Lerp(2.0, 4.0, progress);
+                horizontalSpread = MathUtil.Lerp(1.0, 1.2, progress);
+            }
+            hand.Mode = LimbMode.HuntRelativePosition;
+            hand.RelativeHuntPosition = new Vec2(
+                (-20.0 + 40.0 * handIndex) * scale * horizontalSpread,
+                12.0 * scale - verticalRaise);
+            hand.GripSurfaceId = 0;
+            hand.RetractCounter = Math.Max(0, hand.RetractCounter - 10);
+        }
+
+        // A held item must not replace a crawl hand's low planted pose with the
+        // standing relative grasp target. Spearmaster keeps the item at the hand
+        // until its delayed toss; standing characters still use SlugcatHand's
+        // ordinary one-hand grasp.
+        public void SetHeldFoodPose(int handIndex)
+        {
+            if (handIndex < 0 || handIndex >= arms.Length)
+                throw new ArgumentOutOfRangeException("handIndex");
+            if (slugcat.State.BodyMode == BodyModeIndex.Crawl) return;
+            SetEdibleHandPose(handIndex, 40);
+        }
+
+        // PlayerGraphics.BiteFly runs before PlayerGraphics.Update in Rain World.
+        // GameLoop updates graphics first, so apply the already-integrated head
+        // impulse and the post-decrement blink value here to preserve the same
+        // visible bite frame.
+        public void ApplyEdibleBiteAfterGraphicsStep(int handIndex)
+        {
+            if (handIndex < 0 || handIndex >= arms.Length)
+                throw new ArgumentOutOfRangeException("handIndex");
+            Vec2 impulse = MathUtil.Direction(head.Position,
+                arms[handIndex].End.Position) * 2.0;
+            head.Position += impulse;
+            head.Velocity += impulse * head.AirFriction;
+            drawPositions[0, 0].Y -= 1.0;
+            arms[handIndex].End.Position = drawPositions[0, 0];
+            arms[handIndex].End.LastPosition = drawPositions[0, 0];
+            blink = Math.Max(blink, 4);
         }
 
         private Vec2 GetHeldSpearDirection(DesktopSpear spear, int hand)

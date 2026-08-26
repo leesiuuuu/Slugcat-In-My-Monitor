@@ -42,6 +42,7 @@ namespace RainWorldDesktopPet.Graphics
         private readonly Dictionary<int, ImageAttributes> effectTintAttributes =
             new Dictionary<int, ImageAttributes>();
         private readonly Dictionary<int, SolidBrush> bodyBrushes = new Dictionary<int, SolidBrush>();
+        private readonly GdiSpriteCanvas gdiCanvas;
         private readonly Dictionary<SlugcatId, bool> profileAtlasAvailability =
             new Dictionary<SlugcatId, bool>();
         private readonly PointF[] destinationPoints = new PointF[3];
@@ -55,7 +56,10 @@ namespace RainWorldDesktopPet.Graphics
         private readonly PointF[] tailTextureDestinationTriangle = new PointF[3];
         private readonly PointF[] abilityQuad = new PointF[4];
         private readonly PointF[] abilityTriangle = new PointF[3];
-        private readonly PointF[] eggTailPoints = new PointF[12];
+        private readonly Vec2[] eggTailCenters =
+            new Vec2[DesktopFood.EggBugEggTailSegmentCount + 1];
+        private readonly PointF[] eggTailOutline =
+            new PointF[(DesktopFood.EggBugEggTailSegmentCount + 1) * 2];
         private readonly Bitmap tailRaster;
         private readonly System.Drawing.Graphics tailRasterGraphics;
         private readonly Bitmap flatLightShaderMask;
@@ -98,6 +102,7 @@ namespace RainWorldDesktopPet.Graphics
             flatLightShaderMask = CreateEffectShaderMask(EffectShaderMask.FlatLight);
             lightSourceShaderMask = CreateEffectShaderMask(EffectShaderMask.LightSource);
             shockWaveShaderMask = CreateEffectShaderMask(EffectShaderMask.ShockWave);
+            gdiCanvas = new GdiSpriteCanvas(GetTintAttributes);
         }
 
         public bool UsesLocalAtlas { get { return atlas != null; } }
@@ -191,9 +196,32 @@ namespace RainWorldDesktopPet.Graphics
             string assetStatus,
             SlugcatProfile selectedSlugcat)
         {
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-            graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+            gdiCanvas.Begin(graphics);
+            try
+            {
+                RenderCore(gdiCanvas, pose, renderSpace, debug, world, slugcat,
+                    ai, assetStatus, selectedSlugcat);
+            }
+            finally
+            {
+                gdiCanvas.End();
+            }
+        }
+
+        internal void RenderGpu(GpuSpriteCanvas canvas, SlugcatPose pose,
+            RenderSpace renderSpace, DesktopCollisionWorld world, Slugcat slugcat,
+            DesktopPetAI ai, string assetStatus, SlugcatProfile selectedSlugcat)
+        {
+            if (canvas == null) throw new ArgumentNullException("canvas");
+            RenderCore(canvas, pose, renderSpace, false, world, slugcat, ai,
+                assetStatus, selectedSlugcat);
+        }
+
+        private void RenderCore(ISpriteCanvas graphics, SlugcatPose pose,
+            RenderSpace renderSpace, bool debug, DesktopCollisionWorld world,
+            Slugcat slugcat, DesktopPetAI ai, string assetStatus,
+            SlugcatProfile selectedSlugcat)
+        {
             pose.SpritePlacements.Clear();
             pose.OverlayBounds = renderSpace.VirtualDesktopBounds;
             activePose = pose;
@@ -201,16 +229,13 @@ namespace RainWorldDesktopPet.Graphics
             // object per atlas sprite at compositor FPS was the renderer's
             // largest steady allocation source.
             activeRenderSpace = debug ? renderSpace : null;
-            GraphicsState state = graphics.Save();
+            graphics.Save();
             try
             {
                 double scale = pose.CharacterRenderScale;
-                using (Matrix transform = new Matrix((float)scale, 0.0f, 0.0f,
-                    (float)scale, (float)-renderSpace.WorldOrigin.X,
-                    (float)-renderSpace.WorldOrigin.Y))
-                {
-                    graphics.Transform = transform;
-                }
+                graphics.SetTransform((float)scale, 0.0f, 0.0f, (float)scale,
+                    (float)-renderSpace.WorldOrigin.X,
+                    (float)-renderSpace.WorldOrigin.Y);
 
                 bool profileAtlasAvailable = IsProfileAtlasAvailable(pose.SelectedSlugcat);
                 DrawSpears(graphics, slugcat, pose, pose.TimeStacker, false);
@@ -250,18 +275,19 @@ namespace RainWorldDesktopPet.Graphics
 
                 if (debug)
                 {
-                    using (Matrix transform = new Matrix(1.0f, 0.0f, 0.0f, 1.0f,
+                    graphics.SetTransform(1.0f, 0.0f, 0.0f, 1.0f,
                         (float)-renderSpace.WorldOrigin.X,
-                        (float)-renderSpace.WorldOrigin.Y))
-                    {
-                        graphics.Transform = transform;
-                    }
-                    DrawDebugWorld(graphics, pose, world, slugcat, ai);
+                        (float)-renderSpace.WorldOrigin.Y);
+                    GdiSpriteCanvas debugCanvas = graphics as GdiSpriteCanvas;
+                    if (debugCanvas == null)
+                        throw new InvalidOperationException(
+                            "Debug rendering requires the GDI fallback canvas.");
+                    DrawDebugWorld(debugCanvas.Target, pose, world, slugcat, ai);
                 }
             }
             finally
             {
-                graphics.Restore(state);
+                graphics.Restore();
                 activePose = null;
                 activeRenderSpace = null;
             }
@@ -392,12 +418,10 @@ namespace RainWorldDesktopPet.Graphics
                     pose.CharacterRenderScale, ai.Attention.Kind, ai.Attention.Target,
                     ai.OriginalAttentionKind, ai.OriginalAttentionTarget, assetStatus);
                 string text = builder.ToString();
-                using (Brush shadow = new SolidBrush(Color.FromArgb(210, 0, 0, 0)))
-                using (Brush foreground = new SolidBrush(Color.FromArgb(255, 235, 255, 235)))
-                {
-                    graphics.DrawString(text, debugFont, shadow, new PointF(9.0f, 9.0f));
-                    graphics.DrawString(text, debugFont, foreground, new PointF(8.0f, 8.0f));
-                }
+                graphics.DrawString(text, debugFont,
+                    Color.FromArgb(210, 0, 0, 0), new PointF(9.0f, 9.0f));
+                graphics.DrawString(text, debugFont,
+                    Color.FromArgb(255, 235, 255, 235), new PointF(8.0f, 8.0f));
             }
         }
 
@@ -431,7 +455,7 @@ namespace RainWorldDesktopPet.Graphics
                 surface.MovementVelocity, surface.MissingRefreshes);
         }
 
-        private void DrawTail(System.Drawing.Graphics graphics, SlugcatPose pose, Color bodyColor)
+        private void DrawTail(ISpriteCanvas graphics, SlugcatPose pose, Color bodyColor)
         {
             if (pose.Tail == null || pose.Tail.Length != SimulationConstants.TailSegmentCount)
                 return;
@@ -441,7 +465,7 @@ namespace RainWorldDesktopPet.Graphics
             DrawOriginalTailMesh(graphics, pose, bodyColor);
         }
 
-        private void DrawOriginalTailMesh(System.Drawing.Graphics graphics, SlugcatPose pose, Color bodyColor)
+        private void DrawOriginalTailMesh(ISpriteCanvas graphics, SlugcatPose pose, Color bodyColor)
         {
             pose.TailRenderMode = null;
             PopulateOriginalTailMeshVertices(pose, tailMeshVertices);
@@ -468,16 +492,25 @@ namespace RainWorldDesktopPet.Graphics
             int rasterTop = (int)Math.Floor(minY) - 2;
             int rasterWidth = (int)Math.Ceiling(maxX) + 2 - rasterLeft;
             int rasterHeight = (int)Math.Ceiling(maxY) + 2 - rasterTop;
+            AtlasSprite dmsTail = null;
+            DmsSkinDefinition dmsTailSkin = GetDmsPart("TAIL");
+            bool textured = dmsTailSkin != null && dmsTailSkin.TryGetSprite(
+                "TailTexture", pose.OriginalSlugcatId, DmsSpriteSide.None,
+                out dmsTail);
+            Color tailColor = dmsTailSkin != null &&
+                dmsTailSkin.DefaultTail.Color.A > 0
+                ? dmsTailSkin.DefaultTail.Color : bodyColor;
+
+            // Rain World rasterizes PlayerGraphics' TriangleMesh at its 1:1
+            // internal pixel resolution before point-filtering the result to
+            // the display. Keep that exact ordering even on the GPU canvas:
+            // build only this tiny tail bitmap with aliased GDI triangles,
+            // then let Direct2D upload and scale it with nearest-neighbor.
+            // This avoids both per-triangle GPU AA seams and smooth vector
+            // edges that do not match the game's pixel-art presentation.
             if (rasterWidth <= TailRasterSize && rasterHeight <= TailRasterSize)
             {
                 tailRasterGraphics.Clear(Color.Transparent);
-                AtlasSprite dmsTail = null;
-                DmsSkinDefinition dmsTailSkin = GetDmsPart("TAIL");
-                bool textured = dmsTailSkin != null && dmsTailSkin.TryGetSprite("TailTexture",
-                    pose.OriginalSlugcatId, DmsSpriteSide.None, out dmsTail);
-                Color tailColor = dmsTailSkin != null && dmsTailSkin.DefaultTail.Color.A > 0
-                    ? dmsTailSkin.DefaultTail.Color
-                    : bodyColor;
                 if (textured)
                 {
                     RasterizeDmsTail(dmsTail, tailColor, rasterLeft, rasterTop);
@@ -505,26 +538,15 @@ namespace RainWorldDesktopPet.Graphics
                     rasterLeft, rasterTop + rasterHeight);
                 graphics.DrawImage(tailRaster, tailRasterDestinationPoints,
                     new RectangleF(0.0f, 0.0f, rasterWidth, rasterHeight),
-                    GraphicsUnit.Pixel);
+                    Color.White, true);
             }
             else
             {
-                GraphicsState state = graphics.Save();
-                try
+                for (int i = 0; i < TailTriangles.GetLength(0); i++)
                 {
-                    graphics.SmoothingMode = SmoothingMode.None;
-                    graphics.PixelOffsetMode = PixelOffsetMode.Half;
-                    for (int i = 0; i < TailTriangles.GetLength(0); i++)
-                    {
-                        for (int j = 0; j < 3; j++)
-                            tailTrianglePoints[j] = tailMeshPoints[TailTriangles[i, j]];
-                        graphics.FillPolygon(GetBodyBrush(bodyColor),
-                            tailTrianglePoints, FillMode.Winding);
-                    }
-                }
-                finally
-                {
-                    graphics.Restore(state);
+                    for (int j = 0; j < 3; j++)
+                        tailTrianglePoints[j] = tailMeshPoints[TailTriangles[i, j]];
+                    graphics.FillPolygon(bodyColor, tailTrianglePoints);
                 }
             }
             Array.Copy(tailMeshVertices, pose.TailMeshVertices,
@@ -694,41 +716,35 @@ namespace RainWorldDesktopPet.Graphics
             return brush;
         }
 
-        private static void DrawLimbs(System.Drawing.Graphics graphics, SlugcatPose pose, int layer, Color bodyColor)
+        private static void DrawLimbs(ISpriteCanvas graphics, SlugcatPose pose, int layer, Color bodyColor)
         {
             int sideIndex = layer == 0 ? 0 : 1;
             DrawLimb(graphics, pose.Chest, pose.Elbows[sideIndex], pose.Hands[sideIndex], 5.0f, bodyColor);
             DrawLimb(graphics, pose.Hips, pose.Knees[sideIndex], pose.Feet[sideIndex], 5.5f, bodyColor);
         }
 
-        private static void DrawLimb(System.Drawing.Graphics graphics, Vec2 start, Vec2 joint, Vec2 end, float width, Color bodyColor)
+        private static void DrawLimb(ISpriteCanvas graphics, Vec2 start, Vec2 joint, Vec2 end, float width, Color bodyColor)
         {
-            using (Pen outline = CreateRoundPen(OutlineColor, width + 4.0f))
-            using (Pen fill = CreateRoundPen(bodyColor, width))
-            {
-                PointF[] points = { start.ToPointF(), joint.ToPointF(), end.ToPointF() };
-                graphics.DrawLines(outline, points);
-                graphics.DrawLines(fill, points);
-            }
+            PointF[] points = { start.ToPointF(), joint.ToPointF(), end.ToPointF() };
+            graphics.DrawLines(OutlineColor, width + 4.0f, points);
+            graphics.DrawLines(bodyColor, width, points);
             FillCircle(graphics, end, width * 0.65, bodyColor);
         }
 
-        private static void DrawProceduralBody(System.Drawing.Graphics graphics, SlugcatPose pose)
+        private static void DrawProceduralBody(ISpriteCanvas graphics, SlugcatPose pose)
         {
             float bodyWidth = (float)((18.0 - pose.LandingCompression * 2.5) * pose.VisualBodyScale);
-            using (Pen outline = CreateRoundPen(OutlineColor, bodyWidth + 6.0f))
-            using (Pen body = CreateRoundPen(pose.VisualBodyColor, bodyWidth))
-            {
-                graphics.DrawLine(outline, pose.Chest.ToPointF(), pose.Hips.ToPointF());
-                graphics.DrawLine(body, pose.Chest.ToPointF(), pose.Hips.ToPointF());
-            }
+            graphics.DrawLine(OutlineColor, bodyWidth + 6.0f,
+                pose.Chest.ToPointF(), pose.Hips.ToPointF());
+            graphics.DrawLine(pose.VisualBodyColor, bodyWidth,
+                pose.Chest.ToPointF(), pose.Hips.ToPointF());
             FillCircle(graphics, pose.Chest, 10.3, OutlineColor);
             FillCircle(graphics, pose.Hips, 10.0, OutlineColor);
             FillCircle(graphics, pose.Chest, 7.4 * pose.VisualBodyScale, pose.VisualBodyColor);
             FillCircle(graphics, pose.Hips, 7.1 * pose.VisualHipsScale, Shade(pose.VisualHipsColor));
         }
 
-        private void DrawAtlasBody(System.Drawing.Graphics graphics, SlugcatPose pose)
+        private void DrawAtlasBody(ISpriteCanvas graphics, SlugcatPose pose)
         {
             double bodyAngle = AimScreen(pose.Hips, pose.Chest);
             double verticality = MathUtil.InverseLerp(0.3, 0.5, Math.Abs(pose.BodyUp.Y));
@@ -739,7 +755,7 @@ namespace RainWorldDesktopPet.Graphics
                 0.5, 0.7894737, pose.VisualBodyColor, SelectTorsoSide(pose));
         }
 
-        private void DrawAtlasHips(System.Drawing.Graphics graphics, SlugcatPose pose)
+        private void DrawAtlasHips(ISpriteCanvas graphics, SlugcatPose pose)
         {
             double hipsWidth = pose.VisualHipsScale + 0.05 * pose.Breath;
             Vec2 hipsPosition = (pose.Hips * 2.0 + pose.Chest) / 3.0;
@@ -749,7 +765,7 @@ namespace RainWorldDesktopPet.Graphics
                 0.5, 0.5, pose.VisualHipsColor, SelectTorsoSide(pose));
         }
 
-        private void DrawAtlasLegs(System.Drawing.Graphics graphics, SlugcatPose pose)
+        private void DrawAtlasLegs(ISpriteCanvas graphics, SlugcatPose pose)
         {
             string legsName;
             if (pose.BodyMode == BodyModeIndex.Stand)
@@ -769,7 +785,7 @@ namespace RainWorldDesktopPet.Graphics
                 legsScaleX < 0.0 ? DmsSpriteSide.Left : DmsSpriteSide.Right);
         }
 
-        private void DrawAtlasArm(System.Drawing.Graphics graphics, SlugcatPose pose, int index, Color bodyColor)
+        private void DrawAtlasArm(ISpriteCanvas graphics, SlugcatPose pose, int index, Color bodyColor)
         {
             Vec2 hand = pose.Hands[index];
             Vec2 shoulder = ComputeArmShoulder(pose, index);
@@ -782,7 +798,7 @@ namespace RainWorldDesktopPet.Graphics
                 0.9, 0.5, bodyColor, index == 0 ? DmsSpriteSide.Left : DmsSpriteSide.Right);
         }
 
-        private void DrawExtraGraphics(System.Drawing.Graphics graphics, SlugcatPose pose,
+        private void DrawExtraGraphics(ISpriteCanvas graphics, SlugcatPose pose,
             ExtraGraphicsLayer layer)
         {
             if (pose.ExtraParts == null) return;
@@ -796,7 +812,7 @@ namespace RainWorldDesktopPet.Graphics
             }
         }
 
-        private void DrawAtlasHeadPart(System.Drawing.Graphics graphics, SlugcatPose pose, Color bodyColor, bool faceOnly)
+        private void DrawAtlasHeadPart(ISpriteCanvas graphics, SlugcatPose pose, Color bodyColor, bool faceOnly)
         {
             OriginalFaceState state = ResolveOriginalFaceState(pose);
 
@@ -823,7 +839,7 @@ namespace RainWorldDesktopPet.Graphics
                     state.FaceScaleX < 0.0 ? DmsSpriteSide.Left : DmsSpriteSide.Right);
         }
 
-        private void DrawHead(System.Drawing.Graphics graphics, SlugcatPose pose, bool useAtlas, Color bodyColor)
+        private void DrawHead(ISpriteCanvas graphics, SlugcatPose pose, bool useAtlas, Color bodyColor)
         {
             double angle = SelectHeadAngle(pose);
             if (useAtlas)
@@ -852,16 +868,12 @@ namespace RainWorldDesktopPet.Graphics
                 (pose.Head + right * 10.5 + up * 13.5).ToPointF(),
                 (pose.Head + right * 1.8 + up * 8.0).ToPointF()
             };
-            using (Brush outline = new SolidBrush(OutlineColor))
-            using (Brush body = new SolidBrush(bodyColor))
-            {
-                graphics.FillPolygon(outline, leftEar);
-                graphics.FillPolygon(outline, rightEar);
-                FillCircle(graphics, pose.Head, 11.8, OutlineColor);
-                graphics.FillPolygon(body, leftEar);
-                graphics.FillPolygon(body, rightEar);
-                FillCircle(graphics, pose.Head, 8.9, bodyColor);
-            }
+            graphics.FillPolygon(OutlineColor, leftEar);
+            graphics.FillPolygon(OutlineColor, rightEar);
+            FillCircle(graphics, pose.Head, 11.8, OutlineColor);
+            graphics.FillPolygon(bodyColor, leftEar);
+            graphics.FillPolygon(bodyColor, rightEar);
+            FillCircle(graphics, pose.Head, 8.9, bodyColor);
 
             Vec2 eyeCenter = pose.Head + pose.LookDirection * 1.8 + up * 0.5;
             FillCircle(graphics, eyeCenter - right * 3.2, 1.15, pose.VisualEyeColor);
@@ -1057,13 +1069,13 @@ namespace RainWorldDesktopPet.Graphics
                 : -1.0;
         }
 
-        private void DrawElement(System.Drawing.Graphics graphics, string name, Vec2 position, double angle, double scaleX, double scaleY, double anchorX, double anchorY, Color tint)
+        private void DrawElement(ISpriteCanvas graphics, string name, Vec2 position, double angle, double scaleX, double scaleY, double anchorX, double anchorY, Color tint)
         {
             DrawElement(graphics, name, position, angle, scaleX, scaleY, anchorX,
                 anchorY, tint, DmsSpriteSide.None);
         }
 
-        private void DrawElement(System.Drawing.Graphics graphics, string name, Vec2 position,
+        private void DrawElement(ISpriteCanvas graphics, string name, Vec2 position,
             double angle, double scaleX, double scaleY, double anchorX, double anchorY,
             Color tint, DmsSpriteSide side)
         {
@@ -1084,7 +1096,7 @@ namespace RainWorldDesktopPet.Graphics
             if (dmsApplied) tint = selectedPartSkin.ResolveTint(name,
                 activePose.OriginalSlugcatId, tint);
             AtlasElement element = sprite.Element;
-            GraphicsState state = graphics.Save();
+            graphics.Save();
             try
             {
                 graphics.TranslateTransform((float)position.X, (float)position.Y);
@@ -1095,8 +1107,8 @@ namespace RainWorldDesktopPet.Graphics
                 destinationPoints[0] = new PointF(destination.Left, destination.Top);
                 destinationPoints[1] = new PointF(destination.Right, destination.Top);
                 destinationPoints[2] = new PointF(destination.Left, destination.Bottom);
-                ImageAttributes attributes = GetTintAttributes(tint);
-                graphics.DrawImage(sprite.Atlas.Image, destinationPoints, source, GraphicsUnit.Pixel, attributes, null, 0);
+                graphics.DrawImage(sprite.Atlas.Image, destinationPoints, source,
+                    tint, false);
 
                 if (activePose != null && activeRenderSpace != null)
                 {
@@ -1114,11 +1126,36 @@ namespace RainWorldDesktopPet.Graphics
             }
             finally
             {
-                graphics.Restore(state);
+                graphics.Restore();
             }
         }
 
         public void RenderFoods(System.Drawing.Graphics graphics,
+            DesktopFoodManager foodManager, RenderSpace renderSpace,
+            double characterRenderScale, double interpolation, bool heldLayer)
+        {
+            gdiCanvas.Begin(graphics);
+            try
+            {
+                RenderFoodsCore(gdiCanvas, foodManager, renderSpace,
+                    characterRenderScale, interpolation, heldLayer);
+            }
+            finally
+            {
+                gdiCanvas.End();
+            }
+        }
+
+        internal void RenderFoodsGpu(GpuSpriteCanvas canvas,
+            DesktopFoodManager foodManager, RenderSpace renderSpace,
+            double characterRenderScale, double interpolation, bool heldLayer)
+        {
+            if (canvas == null) throw new ArgumentNullException("canvas");
+            RenderFoodsCore(canvas, foodManager, renderSpace,
+                characterRenderScale, interpolation, heldLayer);
+        }
+
+        private void RenderFoodsCore(ISpriteCanvas graphics,
             DesktopFoodManager foodManager, RenderSpace renderSpace,
             double characterRenderScale, double interpolation, bool heldLayer)
         {
@@ -1130,7 +1167,8 @@ namespace RainWorldDesktopPet.Graphics
                 DesktopFood candidate = foods[i];
                 if (!candidate.IsActive) continue;
                 bool held = candidate.State == DesktopFoodState.Held ||
-                    candidate.State == DesktopFoodState.Biting;
+                    candidate.State == DesktopFoodState.Biting ||
+                    candidate.State == DesktopFoodState.Dragged;
                 if (held != heldLayer) continue;
                 hasFoodInLayer = true;
                 break;
@@ -1139,23 +1177,21 @@ namespace RainWorldDesktopPet.Graphics
             // Slugcat. Most frames have food in only one layer, so avoid a
             // Matrix allocation and graphics state change for the empty pass.
             if (!hasFoodInLayer) return;
-            GraphicsState state = graphics.Save();
+            graphics.Save();
             try
             {
-                using (Matrix transform = new Matrix((float)characterRenderScale,
+                graphics.SetTransform((float)characterRenderScale,
                     0.0f, 0.0f, (float)characterRenderScale,
                     (float)-renderSpace.WorldOrigin.X,
-                    (float)-renderSpace.WorldOrigin.Y))
-                {
-                    graphics.Transform = transform;
-                }
+                    (float)-renderSpace.WorldOrigin.Y);
 
                 for (int i = 0; i < foods.Count; i++)
                 {
                     DesktopFood food = foods[i];
                     if (!food.IsActive) continue;
                     bool held = food.State == DesktopFoodState.Held ||
-                        food.State == DesktopFoodState.Biting;
+                        food.State == DesktopFoodState.Biting ||
+                        food.State == DesktopFoodState.Dragged;
                     if (held != heldLayer) continue;
 
                     Vec2 center = food.Chunk.RenderPosition(interpolation);
@@ -1164,7 +1200,8 @@ namespace RainWorldDesktopPet.Graphics
                     double angle = AimScreen(Vec2.Zero, direction);
                     if (food.Kind == DesktopFoodKind.EggBugEgg)
                     {
-                        DrawEggBugEgg(graphics, food, center, direction, angle);
+                        DrawEggBugEgg(graphics, food, center, direction, angle,
+                            interpolation);
                         continue;
                     }
                     AtlasSprite ignored;
@@ -1190,12 +1227,12 @@ namespace RainWorldDesktopPet.Graphics
             }
             finally
             {
-                graphics.Restore(state);
+                graphics.Restore();
             }
         }
 
-        private void DrawEggBugEgg(System.Drawing.Graphics graphics, DesktopFood food,
-            Vec2 center, Vec2 direction, double angle)
+        private void DrawEggBugEgg(ISpriteCanvas graphics, DesktopFood food,
+            Vec2 center, Vec2 direction, double angle, double interpolation)
         {
             const double swellFactor = 1.15;
             center -= direction * (3.0 * swellFactor);
@@ -1210,8 +1247,9 @@ namespace RainWorldDesktopPet.Graphics
                 atlas.TryGet(food.DetailElement, out ignored);
             FoodLayerPalette palette = FoodRenderPalette.EggBugEgg(food.VisualHue);
 
-            DrawEggBugTail(graphics, food, center, direction, swellFactor,
-                palette.BaseColor);
+            if (food.HasVisibleEggTail)
+                DrawEggBugTail(graphics, food, center, direction, swellFactor,
+                    interpolation, palette.BaseColor);
 
             if (hasShell)
                 DrawElement(graphics, food.FrontElement, center, angle,
@@ -1232,34 +1270,49 @@ namespace RainWorldDesktopPet.Graphics
                     palette.DetailColor);
         }
 
-        private void DrawEggBugTail(System.Drawing.Graphics graphics,
+        private void DrawEggBugTail(ISpriteCanvas graphics,
             DesktopFood food, Vec2 center, Vec2 direction, double swellFactor,
-            Color color)
+            double interpolation, Color color)
         {
             if (direction.LengthSquared < 0.000001) direction = Vec2.Down;
             else direction = direction.Normalized;
-            Vec2 perpendicular = new Vec2(-direction.Y, direction.X);
-            const int pointCount = 6;
-            for (int i = 0; i < pointCount; i++)
+            eggTailCenters[0] = center + direction * (5.0 * swellFactor);
+            for (int i = 0; i < DesktopFood.EggBugEggTailSegmentCount; i++)
+                eggTailCenters[i + 1] = food.EggTailPosition(i, interpolation);
+
+            int nodeCount = eggTailCenters.Length;
+            for (int node = 0; node < nodeCount; node++)
             {
-                double progress = i / (double)(pointCount - 1);
-                double distance = (9.5 + i * 2.0) * swellFactor;
-                double bend = Math.Sin((food.AgeTicks + i * 4.0) * 0.08) *
-                    progress * 0.75 * swellFactor;
-                Vec2 point = center + direction * distance + perpendicular * bend;
-                double halfWidth = MathUtil.Lerp(1.15, 0.12, progress) *
-                    swellFactor;
-                eggTailPoints[i] = (point + perpendicular * halfWidth).ToPointF();
-                eggTailPoints[eggTailPoints.Length - 1 - i] =
-                    (point - perpendicular * halfWidth).ToPointF();
+                Vec2 tangent;
+                if (node == 0)
+                    tangent = eggTailCenters[1] - eggTailCenters[0];
+                else if (node == nodeCount - 1)
+                    tangent = eggTailCenters[node] - eggTailCenters[node - 1];
+                else
+                    tangent = eggTailCenters[node + 1] -
+                        eggTailCenters[node - 1];
+                if (tangent.LengthSquared < 0.000001) tangent = direction;
+                else tangent = tangent.Normalized;
+
+                double progress = node == 0 ? 0.0 : (node - 1) /
+                    (double)(DesktopFood.EggBugEggTailSegmentCount - 1);
+                double width = MathUtil.Lerp(1.0, 0.5,
+                    Math.Pow(progress, 0.25));
+                Vec2 perpendicular = tangent.Perpendicular * width;
+                eggTailOutline[node] =
+                    (eggTailCenters[node] - perpendicular).ToPointF();
+                eggTailOutline[eggTailOutline.Length - 1 - node] =
+                    (eggTailCenters[node] + perpendicular).ToPointF();
             }
-            graphics.FillPolygon(GetBodyBrush(color), eggTailPoints);
+            // One continuous silhouette avoids the antialiased seams produced
+            // by filling five independent segment quads.
+            graphics.FillPolygon(color, eggTailOutline);
         }
 
-        private void FillCachedCircle(System.Drawing.Graphics graphics,
+        private void FillCachedCircle(ISpriteCanvas graphics,
             Vec2 center, double radius, Color color)
         {
-            graphics.FillEllipse(GetBodyBrush(color),
+            graphics.FillEllipse(color,
                 (float)(center.X - radius), (float)(center.Y - radius),
                 (float)(radius * 2.0), (float)(radius * 2.0));
         }
@@ -1505,7 +1558,7 @@ namespace RainWorldDesktopPet.Graphics
             return pen;
         }
 
-        private void DrawAbilityObjects(System.Drawing.Graphics graphics,
+        private void DrawAbilityObjects(ISpriteCanvas graphics,
             Slugcat slugcat, SlugcatPose pose, double interpolation)
         {
             SaintAbilityController saint = slugcat.AbilityController as SaintAbilityController;
@@ -1548,7 +1601,7 @@ namespace RainWorldDesktopPet.Graphics
                     abilityQuad[1] = b.ToPointF();
                     abilityQuad[2] = d.ToPointF();
                     abilityQuad[3] = c.ToPointF();
-                    graphics.FillPolygon(GetBodyBrush(tongueColor), abilityQuad);
+                    graphics.FillPolygon(tongueColor, abilityQuad);
                     previous = next;
                 }
             }
@@ -1600,7 +1653,7 @@ namespace RainWorldDesktopPet.Graphics
                     abilityTriangle[0] = (position + perpendicular).ToPointF();
                     abilityTriangle[1] = (position - perpendicular).ToPointF();
                     abilityTriangle[2] = trail.ToPointF();
-                    graphics.FillPolygon(GetBodyBrush(trailColor), abilityTriangle);
+                    graphics.FillPolygon(trailColor, abilityTriangle);
                 }
                 else if (effect.Kind == AbilityEffectKind.Smoke ||
                     effect.Kind == AbilityEffectKind.FlashingSmoke)
@@ -1809,7 +1862,7 @@ namespace RainWorldDesktopPet.Graphics
                 (float)right, (float)bottom) : RectangleF.Empty;
         }
 
-        private void DrawSpears(System.Drawing.Graphics graphics, Slugcat slugcat,
+        private void DrawSpears(ISpriteCanvas graphics, Slugcat slugcat,
             SlugcatPose pose, double interpolation, bool inFront)
         {
             for (int i = 0; i < slugcat.Spears.Count; i++)
@@ -1842,9 +1895,8 @@ namespace RainWorldDesktopPet.Graphics
                             current[segment - 1], interpolation);
                         Vec2 next = Vec2.Lerp(previousFrame[segment],
                             current[segment], interpolation);
-                        using (Pen umbilical = CreateRoundPen(color,
-                            (float)(0.65 * opacity)))
-                            graphics.DrawLine(umbilical, previous.ToPointF(), next.ToPointF());
+                        graphics.DrawLine(color, (float)(0.65 * opacity),
+                            previous.ToPointF(), next.ToPointF());
                     }
                 }
 
@@ -1865,20 +1917,18 @@ namespace RainWorldDesktopPet.Graphics
                 }
                 else
                 {
-                    using (Pen fallback = CreateRoundPen(needleColor, 2.0f))
-                        graphics.DrawLine(fallback,
-                            (center - direction * 13.0).ToPointF(),
-                            (center + direction * 13.0).ToPointF());
+                    graphics.DrawLine(needleColor, 2.0f,
+                        (center - direction * 13.0).ToPointF(),
+                        (center + direction * 13.0).ToPointF());
                 }
             }
         }
 
-        private static void FillCircle(System.Drawing.Graphics graphics, Vec2 center, double radius, Color color)
+        private static void FillCircle(ISpriteCanvas graphics, Vec2 center, double radius, Color color)
         {
-            using (Brush brush = new SolidBrush(color))
-            {
-                graphics.FillEllipse(brush, (float)(center.X - radius), (float)(center.Y - radius), (float)(radius * 2.0), (float)(radius * 2.0));
-            }
+            graphics.FillEllipse(color, (float)(center.X - radius),
+                (float)(center.Y - radius), (float)(radius * 2.0),
+                (float)(radius * 2.0));
         }
 
         private enum EffectShaderMask

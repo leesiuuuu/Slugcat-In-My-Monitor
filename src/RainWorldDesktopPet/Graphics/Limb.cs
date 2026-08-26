@@ -26,6 +26,7 @@ namespace RainWorldDesktopPet.Graphics
         private readonly double defaultHuntSpeed;
         private readonly double defaultQuickness;
         private readonly int limbNumber;
+        private bool wasCrawling;
 
         public Limb(LimbKind kind, int side, Vec2 initialPosition, double length)
         {
@@ -86,6 +87,22 @@ namespace RainWorldDesktopPet.Graphics
         {
             LastConnectionPosition = ConnectionPosition;
             ConnectionPosition = connection;
+            bool crawling = player.State.BodyMode == BodyModeIndex.Crawl;
+            if (crawling && !wasCrawling)
+            {
+                // Do this before UpdateLimb consumes the previous frame's
+                // target. Otherwise a retracted or raised standing hand can be
+                // retained indefinitely by FindCrawlGrip's 29-unit keep zone.
+                Vec2 normalizedVelocity = connectionVelocity.Normalized;
+                Mode = LimbMode.HuntAbsolutePosition;
+                AbsoluteHuntPosition = connection + new Vec2(
+                    -6.0 + 12.0 * limbNumber + normalizedVelocity.X * 20.0,
+                    Math.Abs(normalizedVelocity.Y) * 20.0);
+                TargetPosition = AbsoluteHuntPosition;
+                GripSurfaceId = 0;
+                RetractCounter = 0;
+                ReachedSnapPosition = false;
+            }
             if (GripSurfaceId != 0 && !world.ContainsSurface(GripSurfaceId,
                 GripSurfaceKind, AbsoluteHuntPosition, 3.0))
             {
@@ -129,6 +146,7 @@ namespace RainWorldDesktopPet.Graphics
             TargetPosition = Mode == LimbMode.HuntRelativePosition
                 ? connection + RotateRelative(RelativeHuntPosition, rotationChunk, connection)
                 : AbsoluteHuntPosition;
+            wasCrawling = crawling;
         }
 
         private void UpdateLimb(Vec2 connection, Vec2 rotationChunk, Vec2 connectionVelocity)

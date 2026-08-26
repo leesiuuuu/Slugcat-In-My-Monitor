@@ -53,6 +53,7 @@ namespace RainWorldDesktopPet.Graphics
             int bestRight = -1;
             Rectangle bestBounds = Rectangle.Empty;
             long bestSaving = 0;
+            bool bestIsRequiredOverlap = false;
 
             for (int left = 0; left < values.Count; left++)
             {
@@ -64,11 +65,23 @@ namespace RainWorldDesktopPet.Graphics
                     long separateArea = Area(values[left].Bounds) +
                         Area(values[right].Bounds);
                     long saving = separateArea - Area(rounded);
-                    if (saving <= bestSaving) continue;
+                    Rectangle intersection = Rectangle.Intersect(
+                        values[left].Bounds, values[right].Bounds);
+                    bool requiredOverlap = intersection.Width > 0 &&
+                        intersection.Height > 0;
+                    if (requiredOverlap)
+                    {
+                        if (bestIsRequiredOverlap && saving <= bestSaving) continue;
+                    }
+                    else
+                    {
+                        if (bestIsRequiredOverlap || saving <= bestSaving) continue;
+                    }
                     bestSaving = saving;
                     bestLeft = left;
                     bestRight = right;
                     bestBounds = rounded;
+                    bestIsRequiredOverlap = requiredOverlap;
                 }
             }
 

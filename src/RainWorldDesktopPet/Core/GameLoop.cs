@@ -211,6 +211,7 @@ namespace RainWorldDesktopPet.Core
             double elapsed = lastTime <= 0.0 ? SimulationConstants.LogicStepSeconds : now - lastTime;
             lastTime = now;
             mouse.Sample(elapsed);
+            Foods.MoveDraggedFood(mouse.Position);
             if (Paused)
             {
                 mouse.ConsumeClick();
@@ -361,13 +362,15 @@ namespace RainWorldDesktopPet.Core
         public bool HitTest(Vec2 screenPoint)
         {
             Vec2 simulationPoint = DesktopWorldTransform.ToSimulation(screenPoint);
-            return Slugcat.HitTest(simulationPoint) ||
+            return Foods.HitTest(simulationPoint) ||
+                Slugcat.HitTest(simulationPoint) ||
                 Vec2.Distance(simulationPoint, Graphics.Head.Position) < 17.0;
         }
 
         public bool BeginGrab(Vec2 screenPoint)
         {
             Vec2 simulationPoint = DesktopWorldTransform.ToSimulation(screenPoint);
+            if (Foods.TryBeginDrag(simulationPoint)) return true;
             if (Slugcat.Grab(simulationPoint)) return true;
             if (Vec2.Distance(simulationPoint, Graphics.Head.Position) < 17.0)
             {
@@ -378,6 +381,8 @@ namespace RainWorldDesktopPet.Core
 
         public void EndGrab()
         {
+            if (Foods.EndDrag(Vec2.ClampMagnitude(mouse.Velocity /
+                SimulationConstants.LogicTicksPerSecond, 25.0))) return;
             Slugcat.Release(mouse.Velocity);
         }
 

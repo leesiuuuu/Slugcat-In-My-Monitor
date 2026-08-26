@@ -4,9 +4,9 @@ using RainWorldDesktopPet.Physics;
 
 namespace RainWorldDesktopPet.Creature
 {
-    // Y-down desktop adapter of retail v1.11.8 Player.MovementUpdate,
-    // UpdateBodyMode, UpdateAnimation, Jump and TerrainImpact. Input mutates
-    // Player-like intent/counters; BodyChunks decide BodyMode; graphics reads it.
+    // Desktop movement state for the Y-down Windows coordinate system.
+    // Input updates intent/counters, BodyChunks resolve contact state, and the
+    // graphics layer consumes the resulting simulation state.
     public sealed partial class SlugcatMovement
     {
         private readonly string rollLoopKey = "movement:roll:" + Guid.NewGuid().ToString("N");
@@ -324,10 +324,9 @@ namespace RainWorldDesktopPet.Creature
             {
                 chest.Velocity.Y = -owner.SelectedSlugcat.Movement.StandingJumpChest * factor;
                 hips.Velocity.Y = -owner.SelectedSlugcat.Movement.StandingJumpHips * factor;
-                // Player.Jump keeps the normal eight-tick boost for every
-                // character. Rivulet's fourteen-tick value belongs solely to
-                // corridor climbing; applying it to an ordinary floor jump
-                // made its already-taller 6/5 launch rise far too high.
+                // Keep the regular floor-jump boost independent from Rivulet's
+                // corridor-specific movement tuning so ordinary jumps do not
+                // inherit the climbing multiplier.
                 jumpBoost = 8.0;
             }
             state.AerobicLevel = MathUtil.Clamp01(state.AerobicLevel + 0.75 / 9.0);
@@ -576,10 +575,9 @@ namespace RainWorldDesktopPet.Creature
             if (input.X != 0) state.Facing = input.X;
             if (state.BodyMode == BodyModeIndex.WallClimb)
             {
-                // This is Player's wall *slide*, not pole climbing. Gravity
-                // remains active in the original code and only a wall jump
-                // may add upward velocity. Driving these chunks upward here
-                // turned Rivulet's pole multiplier into a wall-climb exploit.
+                // Wall contact here is a slide state, not a climbing drive.
+                // Gravity remains active and only a jump may add upward speed;
+                // applying climb tuning here makes fast variants rise by holding up.
                 chest.Velocity.X *= 0.5;
                 hips.Velocity.X *= 0.5;
                 return;
@@ -589,9 +587,8 @@ namespace RainWorldDesktopPet.Creature
                 ? (crawl ? (input.Y != 0 ? 1.0 : movement.CrawlSpeed)
                     : 4.2 * movement.RunSpeedFactor)
                 : (input.Y != 0 ? movement.CrawlSpeed : movement.AirRunSpeed);
-            // Player.UpdateBodyMode Crawl reduces dynamicRunSpeed while the
-            // requested direction opposes the current body axis. This is
-            // independent of CrawlTurn's animation forces.
+            // Crawling into the body's current axis turns more slowly than
+            // moving with it; the animation applies its own rotational forces.
             if (grounded && crawl && input.X != 0 && input.X != crawlAxis)
                 mainSpeed *= 0.75;
             double hipsSpeed = grounded
@@ -611,9 +608,9 @@ namespace RainWorldDesktopPet.Creature
             {
                 lastAirMovementContribution[0].X = chestAir;
                 lastAirMovementContribution[1].X = hipsAir;
-                lastAirControlBranch = "Player.MovementUpdate Default+None no-contact";
+                lastAirControlBranch = "air-control no-contact";
             }
-            else lastAirControlBranch = "Player.MovementUpdate grounded contact";
+            else lastAirControlBranch = "grounded contact";
         }
 
         private void UpdateOriginalPosture(VirtualInput input, bool grounded,
@@ -700,9 +697,9 @@ namespace RainWorldDesktopPet.Creature
                 if (input.X == 0) state.Animation = AnimationIndex.None;
             }
 
-            // Sit/Sleep are stationary rest intents. A locomotion/action input must
-            // wake the Player instead of allowing the curled rest animation to be
-            // reapplied while the BodyChunks are already moving.
+            // Sit/Sleep are stationary rest intents. A locomotion/action input
+            // wakes the pet instead of reapplying a curled rest animation while
+            // its body chunks are already moving.
             bool activeInput = input.X != 0 || input.Y != 0 || input.Jump ||
                 input.Pickup || input.Throw || input.DropThrough;
             bool resting = input.Posture != VirtualPosture.None && !activeInput;

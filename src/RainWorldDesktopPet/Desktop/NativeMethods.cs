@@ -29,6 +29,8 @@ namespace RainWorldDesktopPet.Desktop
         internal const int WM_CAPTURECHANGED = 0x0215;
         internal const int WM_DISPLAYCHANGE = 0x007E;
         internal const int WM_DPICHANGED = 0x02E0;
+        internal const int WM_QUIT = 0x0012;
+        internal const uint PM_NOREMOVE = 0x0000;
         internal const int HTTRANSPARENT = -1;
         internal const int HTCLIENT = 1;
         internal const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
@@ -102,6 +104,17 @@ namespace RainWorldDesktopPet.Desktop
         }
 
         [StructLayout(LayoutKind.Sequential)]
+        internal struct Message
+        {
+            internal IntPtr Window;
+            internal uint Value;
+            internal UIntPtr WParam;
+            internal IntPtr LParam;
+            internal uint Time;
+            internal Point Point;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
         internal struct Rect
         {
             internal int Left;
@@ -170,6 +183,27 @@ namespace RainWorldDesktopPet.Desktop
         internal static extern IntPtr CallNextHookEx(IntPtr hook, int code,
             IntPtr message, IntPtr data);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        internal static extern int GetMessage(out Message message, IntPtr window,
+            uint minimumMessage, uint maximumMessage);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool PeekMessage(out Message message, IntPtr window,
+            uint minimumMessage, uint maximumMessage, uint removeMessage);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool TranslateMessage(ref Message message);
+
+        [DllImport("user32.dll")]
+        internal static extern IntPtr DispatchMessage(ref Message message);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool PostThreadMessage(uint threadId, uint message,
+            UIntPtr wParam, IntPtr lParam);
+
         [DllImport("user32.dll")]
         internal static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax,
             IntPtr module, WinEventProc callback, uint processId, uint threadId, uint flags);
@@ -190,6 +224,9 @@ namespace RainWorldDesktopPet.Desktop
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         internal static extern IntPtr GetModuleHandle(string moduleName);
+
+        [DllImport("kernel32.dll")]
+        internal static extern uint GetCurrentThreadId();
 
         [DllImport("user32.dll")]
         internal static extern IntPtr SetCapture(IntPtr handle);

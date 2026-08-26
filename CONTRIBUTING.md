@@ -67,6 +67,22 @@ formatting changes from functional work.
 - Do not commit debug output, local paths, credentials, personal information, build products, or temporary files.
 - Explain the need, source, version, license, and distribution impact of every new external dependency.
 
+## Compatibility research and public-source boundary
+
+Compatibility work with Rain World should describe **observable behavior and this
+project's own implementation** in the public repository. See
+[Behavior compatibility and source boundary](docs/BehaviorCompatibility.md) for the
+full policy.
+
+- Do not include decompiled source, reconstructed third-party method bodies, IL/ILDASM output, method tokens, RVAs, binary offsets, or decompiler dumps in public PRs or documentation.
+- Do not add Rain World DLLs, executables, extracted texture/audio payloads, or other proprietary game files to the repository.
+- Reduce research findings to user-visible behavior requirements, project regression tests, or independently written implementation specifications that fit this project's architecture.
+- Keep local analysis output and detailed reverse-engineering notes in ignored/private working directories.
+- Do not publish source-shaped pseudocode or comments that preserve the expression of a third-party implementation.
+
+These rules are repository-hygiene and provenance guidance, not a legal opinion
+about any particular piece of code.
+
 ## AI-assisted tools
 
 AI-assisted tools are allowed, but contributors remain responsible for reviewing

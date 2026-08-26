@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace RainWorldDesktopPet.Graphics
@@ -14,6 +16,7 @@ namespace RainWorldDesktopPet.Graphics
         private const double SurfaceShrinkThreshold = 0.70;
         private const double SurfaceShrinkHeadroom = 1.20;
         private readonly CompositionSurface[] surfaces = new CompositionSurface[MaximumSurfaces];
+        private readonly Size[] gpuSurfaceSizes = new Size[MaximumSurfaces];
         private readonly Size[] effectSurfaceSizes = new Size[MaximumSurfaces];
         private readonly uint[] surfaceShrinkSince = new uint[MaximumSurfaces];
         private readonly uint[] effectShrinkSince = new uint[MaximumSurfaces];
@@ -23,6 +26,30 @@ namespace RainWorldDesktopPet.Graphics
         private Rectangle desktopBounds;
         private uint activeEffectMask;
         private bool disposed;
+        private readonly GpuSpriteCanvas gpuCanvas;
+        private readonly Dictionary<Bitmap, GpuTextureRecord> gpuTextures =
+            new Dictionary<Bitmap, GpuTextureRecord>(BitmapReferenceComparer.Instance);
+
+        private sealed class GpuTextureRecord
+        {
+            internal int Id;
+            internal int Width;
+            internal int Height;
+        }
+
+        private sealed class BitmapReferenceComparer : IEqualityComparer<Bitmap>
+        {
+            internal static readonly BitmapReferenceComparer Instance =
+                new BitmapReferenceComparer();
+            public bool Equals(Bitmap left, Bitmap right)
+            {
+                return ReferenceEquals(left, right);
+            }
+            public int GetHashCode(Bitmap value)
+            {
+                return RuntimeHelpers.GetHashCode(value);
+            }
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct GpuSmokeEffect
@@ -38,6 +65,7 @@ namespace RainWorldDesktopPet.Graphics
             this.desktopBounds = desktopBounds;
             int result = NativeMethods.Create(windowHandle, out nativeRenderer);
             ThrowIfFailed(result, "Could not initialize DirectComposition");
+            gpuCanvas = new GpuSpriteCanvas(this);
         }
 
         public void SetDesktopBounds(Rectangle bounds)
@@ -100,11 +128,149 @@ namespace RainWorldDesktopPet.Graphics
             }
 
             surfaceInactiveSince[slot] = 0;
+            gpuSurfaceSizes[slot] = Size.Empty;
             int centerX = bounds.Left + bounds.Width / 2;
             int centerY = bounds.Top + bounds.Height / 2;
             surface.Bounds = new Rectangle(centerX - surface.Width / 2,
                 centerY - surface.Height / 2, surface.Width, surface.Height);
             return surface;
+        }
+
+        internal GpuSpriteCanvas PrepareGpuSurface(int slot, Rectangle bounds)
+        {
+            if (slot < 0 || slot >= MaximumSurfaces)
+                throw new ArgumentOutOfRangeException("slot");
+            if (bounds.Width < 1 || bounds.Height < 1)
+                throw new ArgumentOutOfRangeException("bounds");
+
+            Size required = bounds.Size;
+            Size current = gpuSurfaceSizes[slot];
+            Size reusable = current.IsEmpty ? required :
+                SelectReusableSurfaceSize(current, required);
+            bool mustGrow = current.IsEmpty || reusable.Width > current.Width ||
+                reusable.Height > current.Height;
+            if (mustGrow)
+            {
+                surfaceShrinkSince[slot] = 0;
+            }
+            else if (ShouldShrinkSurface(current, required))
+            {
+                uint now = CurrentTick();
+                if (surfaceShrinkSince[slot] == 0)
+                {
+                    surfaceShrinkSince[slot] = now;
+                }
+                else if (HasElapsed(surfaceShrinkSince[slot], now,
+                    SurfaceShrinkDelayMilliseconds))
+                {
+                    reusable = SelectShrinkSurfaceSize(current, required);
+                    surfaceShrinkSince[slot] = 0;
+                }
+            }
+            else
+            {
+                surfaceShrinkSince[slot] = 0;
+            }
+
+            gpuSurfaceSizes[slot] = reusable;
+            if (surfaces[slot] != null)
+            {
+                surfaces[slot].Dispose();
+                surfaces[slot] = null;
+            }
+            surfaceInactiveSince[slot] = 0;
+            int centerX = bounds.Left + bounds.Width / 2;
+            int centerY = bounds.Top + bounds.Height / 2;
+            Rectangle actualBounds = new Rectangle(centerX - reusable.Width / 2,
+                centerY - reusable.Height / 2, reusable.Width, reusable.Height);
+            gpuCanvas.Begin(slot, actualBounds, reusable);
+            return gpuCanvas;
+        }
+
+        internal void PresentGpu(GpuSpriteCanvas canvas)
+        {
+            if (canvas == null) throw new ArgumentNullException("canvas");
+            GpuDrawCommand[] commands = canvas.Commands;
+            GpuPoint[] points = canvas.Points;
+            int result = NativeMethods.PresentGpu(nativeRenderer, canvas.Slot,
+                commands, (uint)canvas.CommandCount, points,
+                (uint)canvas.PointCount, (uint)canvas.SurfaceSize.Width,
+                (uint)canvas.SurfaceSize.Height,
+                canvas.Bounds.X - desktopBounds.X,
+                canvas.Bounds.Y - desktopBounds.Y);
+            ThrowIfFailed(result, "Could not present GPU sprite commands");
+        }
+
+        internal int GetGpuTexture(Bitmap bitmap, bool dynamicTexture)
+        {
+            if (bitmap == null) throw new ArgumentNullException("bitmap");
+            GpuTextureRecord record;
+            if (!gpuTextures.TryGetValue(bitmap, out record))
+            {
+                record = new GpuTextureRecord();
+                UploadGpuTexture(bitmap, record, false);
+                gpuTextures.Add(bitmap, record);
+            }
+            else if (dynamicTexture)
+            {
+                UploadGpuTexture(bitmap, record, true);
+            }
+            return record.Id;
+        }
+
+        private void UploadGpuTexture(Bitmap bitmap, GpuTextureRecord record,
+            bool update)
+        {
+            Bitmap converted = null;
+            Bitmap source = bitmap;
+            if (bitmap.PixelFormat != PixelFormat.Format32bppPArgb)
+            {
+                converted = new Bitmap(bitmap.Width, bitmap.Height,
+                    PixelFormat.Format32bppPArgb);
+                using (System.Drawing.Graphics drawing =
+                    System.Drawing.Graphics.FromImage(converted))
+                {
+                    drawing.CompositingMode =
+                        System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                    drawing.DrawImageUnscaled(bitmap, 0, 0);
+                }
+                source = converted;
+            }
+
+            BitmapData data = source.LockBits(new Rectangle(0, 0,
+                source.Width, source.Height), ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppPArgb);
+            try
+            {
+                int result;
+                if (update && record.Id != 0 && record.Width == source.Width &&
+                    record.Height == source.Height)
+                {
+                    result = NativeMethods.UpdateGpuTexture(nativeRenderer,
+                        record.Id, data.Scan0, (uint)source.Width,
+                        (uint)source.Height, (uint)Math.Abs(data.Stride));
+                }
+                else
+                {
+                    int textureId;
+                    result = NativeMethods.RegisterGpuTexture(nativeRenderer,
+                        data.Scan0, (uint)source.Width, (uint)source.Height,
+                        (uint)Math.Abs(data.Stride), out textureId);
+                    if (result >= 0)
+                    {
+                        record.Id = textureId;
+                        record.Width = source.Width;
+                        record.Height = source.Height;
+                    }
+                }
+                ThrowIfFailed(result, update ? "Could not update a GPU sprite texture" :
+                    "Could not register a GPU sprite texture");
+            }
+            finally
+            {
+                source.UnlockBits(data);
+                if (converted != null) converted.Dispose();
+            }
         }
 
         public static Size SelectReusableSurfaceSize(Size current, Size required)
@@ -153,6 +319,7 @@ namespace RainWorldDesktopPet.Graphics
             {
                 if (surfaces[i] != null) surfaces[i].Dispose();
                 surfaces[i] = null;
+                gpuSurfaceSizes[i] = Size.Empty;
                 effectSurfaceSizes[i] = Size.Empty;
                 surfaceShrinkSince[i] = 0;
                 effectShrinkSince[i] = 0;
@@ -278,7 +445,7 @@ namespace RainWorldDesktopPet.Graphics
                 {
                     surfaceInactiveSince[i] = 0;
                 }
-                else if (surfaces[i] != null)
+                else if (surfaces[i] != null || !gpuSurfaceSizes[i].IsEmpty)
                 {
                     if (surfaceInactiveSince[i] == 0)
                     {
@@ -287,8 +454,9 @@ namespace RainWorldDesktopPet.Graphics
                     else if (HasElapsed(surfaceInactiveSince[i], now,
                         SurfaceReleaseDelayMilliseconds))
                     {
-                        surfaces[i].Dispose();
+                        if (surfaces[i] != null) surfaces[i].Dispose();
                         surfaces[i] = null;
+                        gpuSurfaceSizes[i] = Size.Empty;
                         surfaceShrinkSince[i] = 0;
                         surfaceInactiveSince[i] = 0;
                     }
@@ -324,10 +492,12 @@ namespace RainWorldDesktopPet.Graphics
                 NativeMethods.Destroy(nativeRenderer);
                 nativeRenderer = IntPtr.Zero;
             }
+            gpuTextures.Clear();
             for (int i = 0; i < surfaces.Length; i++)
             {
                 if (surfaces[i] != null) surfaces[i].Dispose();
                 surfaces[i] = null;
+                gpuSurfaceSizes[i] = Size.Empty;
                 effectSurfaceSizes[i] = Size.Empty;
                 surfaceShrinkSince[i] = 0;
                 effectShrinkSince[i] = 0;
@@ -378,6 +548,24 @@ namespace RainWorldDesktopPet.Graphics
             [DllImport(Library, EntryPoint = "SlugcatDCompPresent", CallingConvention = CallingConvention.StdCall)]
             internal static extern int Present(IntPtr renderer, int slot, IntPtr pixels,
                 uint width, uint height, uint stride, float x, float y);
+
+            [DllImport(Library, EntryPoint = "SlugcatDCompRegisterGpuTexture",
+                CallingConvention = CallingConvention.StdCall)]
+            internal static extern int RegisterGpuTexture(IntPtr renderer,
+                IntPtr pixels, uint width, uint height, uint stride,
+                out int textureId);
+
+            [DllImport(Library, EntryPoint = "SlugcatDCompUpdateGpuTexture",
+                CallingConvention = CallingConvention.StdCall)]
+            internal static extern int UpdateGpuTexture(IntPtr renderer,
+                int textureId, IntPtr pixels, uint width, uint height, uint stride);
+
+            [DllImport(Library, EntryPoint = "SlugcatDCompPresentGpu",
+                CallingConvention = CallingConvention.StdCall)]
+            internal static extern int PresentGpu(IntPtr renderer, int slot,
+                [In] GpuDrawCommand[] commands, uint commandCount,
+                [In] GpuPoint[] points, uint pointCount, uint width, uint height,
+                float x, float y);
 
             [DllImport(Library, EntryPoint = "SlugcatDCompPresentEffects", CallingConvention = CallingConvention.StdCall)]
             internal static extern int PresentEffects(IntPtr renderer, int slot,

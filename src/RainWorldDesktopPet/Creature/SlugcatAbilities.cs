@@ -22,11 +22,9 @@ namespace RainWorldDesktopPet.Creature
     public sealed class AbilityEffect
     {
         private readonly Random random;
-        // ExplosionSmoke and Spark are CosmeticSprites in the original DLL.
-        // The first port allocated a full BodyChunk for every cosmetic effect,
-        // doubling the object count of each Artificer jump (and paying desktop
-        // terrain resolution for every particle). Keep only the original
-        // cosmetic state and integrate the lightweight visual trajectory.
+        // Ability particles are presentation state rather than physical actors.
+        // Keeping them as lightweight trajectories avoids allocating BodyChunks
+        // and running desktop terrain resolution for every visual particle.
 
         public AbilityEffect(AbilityEffectKind kind, Vec2 position, Vec2 velocity,
             int lifetime, double radius)
@@ -70,9 +68,8 @@ namespace RainWorldDesktopPet.Creature
         {
             get
             {
-                // Match each original CosmeticSprite's destruction check.
-                // Smoke checks lastLife <= 0, ExplosionLight checks lastLife < 0,
-                // and ShockWave checks lastLife > 1 after advancing.
+                // Different visual kinds use different edge rules so flashes,
+                // expanding waves, and smoke can finish on their intended frame.
                 if (Kind == AbilityEffectKind.Smoke ||
                     Kind == AbilityEffectKind.FlashingSmoke) return LastLife > 0.0;
                 if (Kind == AbilityEffectKind.ExplosionLight) return LastLife >= 0.0;
@@ -102,8 +99,7 @@ namespace RainWorldDesktopPet.Creature
             effect.Rotation = rotation;
             effect.LastRotation = effect.Rotation;
             effect.RotationVelocity = rotationVelocity;
-            // ExplosionSmoke getToPos has y=-100..400 in Rain World's y-up
-            // coordinates. This project uses desktop y-down coordinates.
+            // Target motion is stored directly in the desktop Y-down space.
             effect.TargetPosition = target;
             return effect;
         }
@@ -114,8 +110,8 @@ namespace RainWorldDesktopPet.Creature
             AbilityEffect effect = new AbilityEffect(AbilityEffectKind.ExplosionLight,
                 position, Vec2.Zero, lifeTime, radius);
             effect.Intensity = alpha;
-            // ExplosionLight initializes lastLife to zero, so the same-tick
-            // draw interpolates into the three-frame flash instead of popping.
+            // Start interpolation from zero so the first rendered frame eases
+            // into the flash instead of appearing as an instantaneous pop.
             effect.LastLife = 0.0;
             return effect;
         }
@@ -130,14 +126,12 @@ namespace RainWorldDesktopPet.Creature
             if (source.NextDouble() < 0.1)
                 lifeTime = source.Next(standardLifeTime,
                     Math.Max(standardLifeTime + 1, exceptionalLifeTime));
-            // Spark uses Random.Range(0, standardLifeTime) in the original.
-            // A zero result is a valid one-frame cosmetic: it is drawn after
-            // Room.AddObject, then destroyed by its first Update. Do not turn
-            // that quarter of a 4-tick burst into extra visible trails.
+            // Zero lifetime remains a valid single-frame burst; clamping it to
+            // one would make short spark groups visibly denser than intended.
             AbilityEffect effect = new AbilityEffect(AbilityEffectKind.Spark,
                 initialPosition, velocity, lifeTime, 1.0);
-            // Spark stores lastPos before offsetting pos along velocity. Its
-            // three-point trail history begins at the unshifted spawn point.
+            // Trail history starts at the unshifted spawn point so the first
+            // segment connects cleanly to the emitter.
             effect.LastPosition = position;
             effect.PreviousPreviousPosition = position;
             effect.PreviousPreviousPreviousPosition = position;
@@ -203,11 +197,9 @@ namespace RainWorldDesktopPet.Creature
 
         private void IntegrateWithTerrain(DesktopCollisionWorld world, double bounce)
         {
-            // Original cosmetics ray-trace only to avoid entering solid room
-            // tiles. Desktop surfaces are presentation terrain rather than
-            // gameplay tiles, so no physics BodyChunk is required here.
-            // This retains the exact smoke/spark count and motion equations
-            // while removing the port-only allocation and collision workload.
+            // These particles are decorative and do not participate in desktop
+            // collision gameplay, so integrating their visual trajectory is
+            // enough and avoids per-particle BodyChunk work.
             Position += Velocity;
         }
     }
@@ -633,8 +625,8 @@ namespace RainWorldDesktopPet.Creature
                 RetractSpearProgress();
                 return;
             }
-            // Player.GrabUpdate leaves an in-progress needle unchanged while
-            // Pickup remains held but another action breaks the neutral gate.
+            // Keep partial extraction progress while pickup stays held even if
+            // another action temporarily breaks the neutral extraction gate.
             if (!neutral) return;
 
             if (actionState != SpearmasterActionState.PreparingSpear)
@@ -642,7 +634,7 @@ namespace RainWorldDesktopPet.Creature
 
             if (spearProgress == 0.0)
             {
-                // TailSpeckles.newSpearSlot uses Random.Range(0, count - 1).
+                // Choose a visible tail lane, row, and needle appearance.
                 spearLine = random.Next(0, 2);
                 spearRow = random.Next(0, 4);
                 spearType = random.Next(3);
@@ -1142,11 +1134,9 @@ namespace RainWorldDesktopPet.Creature
             double terrainMassShare = mode == SaintTongueMode.AttachedToTerrain ? 1.0 : 0.0;
             Vec2 baseDirection = (desktopRope.AConnect -
                 Owner.BodyChunks[0].Position).Normalized;
-            // Tongue.RequestRope uses min(requestedRopeLength,
-            // onRopePos * totalRope). Terrain attachment uses the player's
-            // default onRopePos=1 and totalRope=200. Attached elasticity then
-            // maps a from 1.1 to 1 as elastic relaxes; the previous 0.7 made a
-            // slack rope pull Saint toward the anchor every tick.
+            // Clamp the requested rope length to the active rope span, then
+            // relax toward the target as elasticity decays. A larger attached
+            // factor prevents a visibly slack rope from pulling every tick.
             const double onRopePosition = 1.0;
             const double totalRope = 200.0;
             double requestRope = Math.Min(requestedLength,
@@ -1287,8 +1277,8 @@ namespace RainWorldDesktopPet.Creature
                     Owner.State.SlowMovementStun, slow);
             }
 
-            // Roll, BellySlide and their transitions belong to Player's common
-            // movement state. Retain the legacy code below only as a fallback.
+            // Shared movement handles roll and belly-slide transitions. Keep
+            // the legacy controller path only as a defensive fallback.
             if (Owner.Movement != null) return;
 
             if (allowRoll > 0) allowRoll--;
@@ -1381,8 +1371,8 @@ namespace RainWorldDesktopPet.Creature
 
         public override void TerrainImpact(TerrainImpactData impact)
         {
-            // SlugcatMovement.TerrainImpact handles the base-game Roll for all
-            // characters before this character-specific callback.
+            // Shared movement normally handles roll entry before this
+            // character-specific fallback callback runs.
             if (Owner.Movement != null) return;
             int downDiagonal = Owner.LastInput.X != 0 && Owner.LastInput.Y > 0
                 ? Owner.LastInput.X : 0;

@@ -7,6 +7,28 @@ assets/skins/
 .tools/
 .local-tools/
 
+# Local compatibility/research output. Keep proprietary binaries and decompiler
+# products outside the tracked source tree.
+.decomp/
+.decompiled/
+research-private/
+*.il
+*.ildasm
+Assembly-CSharp.dll
+Assembly-CSharp-firstpass.dll
+HOOKS-Assembly-CSharp.dll
+RainWorld_Data/
+resources.assets
+resources.assets.resS
+
+# Detailed local behavior/parity research notes. Keep these available locally,
+# but do not publish them from the repository.
+docs/DownpourOriginalAbilityAudit.md
+docs/OriginalParity.md
+docs/RainWorldBehaviorMap.md
+docs/SlugcatAbilityParity.md
+docs/SlugcatGraphicsProfiles.md
+
 # Native C# build output and local runtime configuration.
 bin/
 obj/

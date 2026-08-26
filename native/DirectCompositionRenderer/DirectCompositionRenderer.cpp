@@ -1,13 +1,18 @@
+#define NOMINMAX
 #include <windows.h>
 #include <d3d11_1.h>
 #include <d3dcompiler.h>
+#include <d2d1_1.h>
+#include <d2d1effects.h>
 #include <dcomp.h>
 #include <dxgi.h>
 #include <wrl/client.h>
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -25,6 +30,32 @@ namespace
         float FrontRed, FrontGreen, FrontBlue, FrontAlpha;
         float Seed;
     };
+
+    struct GpuPoint
+    {
+        float X, Y;
+    };
+
+    struct GpuDrawCommand
+    {
+        int Kind, TextureId, PointOffset, PointCount;
+        float X, Y, Width, Height;
+        float SourceX, SourceY, SourceWidth, SourceHeight;
+        float StrokeWidth;
+        int Color;
+    };
+
+    enum class GpuDrawKind
+    {
+        FillPolygon = 1,
+        StrokePolyline = 2,
+        FillEllipse = 3,
+        StrokeEllipse = 4,
+        Image = 5
+    };
+
+    static_assert(sizeof(GpuPoint) == 8, "GpuPoint ABI changed");
+    static_assert(sizeof(GpuDrawCommand) == 56, "GpuDrawCommand ABI changed");
 
     struct Surface
     {
@@ -127,6 +158,14 @@ float4 PSMain(PixelInput input) : SV_TARGET { float2 p=input.uv*2-1;
         ComPtr<IDCompositionTarget> Target;
         ComPtr<IDCompositionVisual> Root, BaseRoot, EffectRoot;
         std::array<Surface, MaximumSurfaces> Surfaces, EffectSurfaces;
+        ComPtr<ID2D1Factory1> SpriteFactory;
+        ComPtr<ID2D1Device> SpriteDevice;
+        ComPtr<ID2D1DeviceContext> SpriteContext;
+        ComPtr<ID2D1SolidColorBrush> SpriteBrush;
+        ComPtr<ID2D1StrokeStyle1> SpriteStrokeStyle;
+        ComPtr<ID2D1Effect> SpriteTintEffect;
+        std::unordered_map<int, ComPtr<ID2D1Bitmap1>> SpriteTextures;
+        int NextSpriteTextureId = 1;
         ComPtr<ID3D11VertexShader> EffectVertexShader;
         ComPtr<ID3D11PixelShader> EffectPixelShader;
         ComPtr<ID3D11InputLayout> EffectInputLayout;
@@ -151,6 +190,7 @@ float4 PSMain(PixelInput input) : SV_TARGET { float2 p=input.uv*2-1;
             Context.As(&Context1);
             ComPtr<IDXGIDevice> dxgi;
             if (FAILED(hr=Device.As(&dxgi))) return hr;
+            if (FAILED(hr=InitializeGpuSprites(dxgi.Get()))) return hr;
             if (FAILED(hr=DCompositionCreateDevice(dxgi.Get(),IID_PPV_ARGS(&CompositionDevice)))) return hr;
             if (FAILED(hr=CompositionDevice->CreateTargetForHwnd(window,TRUE,&Target))) return hr;
             if (FAILED(hr=CompositionDevice->CreateVisual(&Root))) return hr;
@@ -161,6 +201,32 @@ float4 PSMain(PixelInput input) : SV_TARGET { float2 p=input.uv*2-1;
             if (FAILED(hr=Target->SetRoot(Root.Get()))) return hr;
             EffectStatus = InitializeEffects();
             return CompositionDevice->Commit();
+        }
+
+        HRESULT InitializeGpuSprites(IDXGIDevice* dxgi)
+        {
+            if (!dxgi) return E_INVALIDARG;
+            D2D1_FACTORY_OPTIONS options = {};
+#if defined(_DEBUG)
+            options.debugLevel = D2D1_DEBUG_LEVEL_INFORMATION;
+#endif
+            HRESULT hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                __uuidof(ID2D1Factory1), &options,
+                reinterpret_cast<void**>(SpriteFactory.GetAddressOf()));
+            if (FAILED(hr)) return hr;
+            if (FAILED(hr=SpriteFactory->CreateDevice(dxgi,&SpriteDevice))) return hr;
+            if (FAILED(hr=SpriteDevice->CreateDeviceContext(
+                D2D1_DEVICE_CONTEXT_OPTIONS_NONE,&SpriteContext))) return hr;
+            if (FAILED(hr=SpriteContext->CreateSolidColorBrush(
+                D2D1::ColorF(1.0f,1.0f,1.0f,1.0f),&SpriteBrush))) return hr;
+            D2D1_STROKE_STYLE_PROPERTIES1 stroke = D2D1::StrokeStyleProperties1(
+                D2D1_CAP_STYLE_ROUND,D2D1_CAP_STYLE_ROUND,D2D1_CAP_STYLE_ROUND,
+                D2D1_LINE_JOIN_ROUND,10.0f,D2D1_DASH_STYLE_SOLID,0.0f,
+                D2D1_STROKE_TRANSFORM_TYPE_NORMAL);
+            if (FAILED(hr=SpriteFactory->CreateStrokeStyle(stroke,nullptr,0,
+                &SpriteStrokeStyle))) return hr;
+            return SpriteContext->CreateEffect(CLSID_D2D1ColorMatrix,
+                &SpriteTintEffect);
         }
 
         HRESULT InitializeEffects()
@@ -246,6 +312,213 @@ float4 PSMain(PixelInput input) : SV_TARGET { float2 p=input.uv*2-1;
             HRESULT end=s.CompositionSurface->EndDraw();
             if (FAILED(upload)) return upload; if (FAILED(end)) return end;
             return SetVisual(s,x,y);
+        }
+
+        HRESULT RegisterGpuTexture(const void* pixels,UINT width,UINT height,
+            UINT stride,int* textureId)
+        {
+            if (!pixels || !width || !height || stride<width*4 || !textureId)
+                return E_INVALIDARG;
+            D2D1_BITMAP_PROPERTIES1 properties = D2D1::BitmapProperties1(
+                D2D1_BITMAP_OPTIONS_NONE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                    D2D1_ALPHA_MODE_PREMULTIPLIED),96.0f,96.0f);
+            ComPtr<ID2D1Bitmap1> bitmap;
+            HRESULT hr=SpriteContext->CreateBitmap(D2D1::SizeU(width,height),
+                pixels,stride,&properties,&bitmap);
+            if (FAILED(hr)) return hr;
+            int id=NextSpriteTextureId++;
+            if (id<=0) return E_OUTOFMEMORY;
+            SpriteTextures[id]=bitmap;
+            *textureId=id;
+            return S_OK;
+        }
+
+        HRESULT UpdateGpuTexture(int textureId,const void* pixels,UINT width,
+            UINT height,UINT stride)
+        {
+            if (!pixels || !width || !height || stride<width*4) return E_INVALIDARG;
+            auto found=SpriteTextures.find(textureId);
+            if (found==SpriteTextures.end()) return E_INVALIDARG;
+            D2D1_SIZE_U size=found->second->GetPixelSize();
+            if (size.width!=width || size.height!=height) return E_INVALIDARG;
+            return found->second->CopyFromMemory(nullptr,pixels,stride);
+        }
+
+        static D2D1_COLOR_F DecodeColor(int value)
+        {
+            UINT color=static_cast<UINT>(value);
+            return D2D1::ColorF(((color>>16)&255)/255.0f,
+                ((color>>8)&255)/255.0f,(color&255)/255.0f,
+                ((color>>24)&255)/255.0f);
+        }
+
+        HRESULT CreatePath(const GpuDrawCommand& command,const GpuPoint* points,
+            UINT pointCount,bool closed,ID2D1PathGeometry** geometry)
+        {
+            if (!geometry || !points || command.PointOffset<0 ||
+                command.PointCount<2 || static_cast<UINT>(command.PointOffset)+
+                static_cast<UINT>(command.PointCount)>pointCount) return E_INVALIDARG;
+            *geometry=nullptr;
+            ComPtr<ID2D1PathGeometry> path;
+            HRESULT hr=SpriteFactory->CreatePathGeometry(&path);
+            if (FAILED(hr)) return hr;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (FAILED(hr=path->Open(&sink))) return hr;
+            // Match GDI FillMode.Winding for concave/self-overlapping sprite
+            // silhouettes instead of Direct2D's default alternate fill rule.
+            if (closed) sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+            const GpuPoint* first=points+command.PointOffset;
+            sink->BeginFigure(D2D1::Point2F(first->X,first->Y),closed?
+                D2D1_FIGURE_BEGIN_FILLED:D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddLines(reinterpret_cast<const D2D1_POINT_2F*>(first+1),
+                static_cast<UINT32>(command.PointCount-1));
+            sink->EndFigure(closed?D2D1_FIGURE_END_CLOSED:D2D1_FIGURE_END_OPEN);
+            if (FAILED(hr=sink->Close())) return hr;
+            *geometry=path.Detach();
+            return S_OK;
+        }
+
+        HRESULT DrawGpuCommand(const GpuDrawCommand& command,
+            const GpuPoint* points,UINT pointCount,float offsetX,float offsetY)
+        {
+            D2D1_COLOR_F color=DecodeColor(command.Color);
+            SpriteBrush->SetColor(color);
+            GpuDrawKind kind=static_cast<GpuDrawKind>(command.Kind);
+            if (kind==GpuDrawKind::FillPolygon ||
+                kind==GpuDrawKind::StrokePolyline)
+            {
+                if (kind==GpuDrawKind::StrokePolyline &&
+                    command.PointCount==2 && points && command.PointOffset>=0 &&
+                    static_cast<UINT>(command.PointOffset)+2<=pointCount)
+                {
+                    const GpuPoint* line=points+command.PointOffset;
+                    SpriteContext->DrawLine(D2D1::Point2F(line[0].X,line[0].Y),
+                        D2D1::Point2F(line[1].X,line[1].Y),SpriteBrush.Get(),
+                        std::max(0.01f,command.StrokeWidth),SpriteStrokeStyle.Get());
+                    return S_OK;
+                }
+                ComPtr<ID2D1PathGeometry> geometry;
+                HRESULT hr=CreatePath(command,points,pointCount,
+                    kind==GpuDrawKind::FillPolygon,&geometry);
+                if (FAILED(hr)) return hr;
+                if (kind==GpuDrawKind::FillPolygon)
+                    SpriteContext->FillGeometry(geometry.Get(),SpriteBrush.Get());
+                else
+                    SpriteContext->DrawGeometry(geometry.Get(),SpriteBrush.Get(),
+                        std::max(0.01f,command.StrokeWidth),
+                        SpriteStrokeStyle.Get());
+                return S_OK;
+            }
+            if (kind==GpuDrawKind::FillEllipse ||
+                kind==GpuDrawKind::StrokeEllipse)
+            {
+                D2D1_ELLIPSE ellipse=D2D1::Ellipse(
+                    D2D1::Point2F(command.X,command.Y),
+                    std::max(0.0f,command.Width),std::max(0.0f,command.Height));
+                if (kind==GpuDrawKind::FillEllipse)
+                    SpriteContext->FillEllipse(ellipse,SpriteBrush.Get());
+                else
+                    SpriteContext->DrawEllipse(ellipse,SpriteBrush.Get(),
+                        std::max(0.01f,command.StrokeWidth),SpriteStrokeStyle.Get());
+                return S_OK;
+            }
+            if (kind!=GpuDrawKind::Image) return E_INVALIDARG;
+            if (!points || command.PointOffset<0 || command.PointCount<3 ||
+                static_cast<UINT>(command.PointOffset)+3>pointCount ||
+                command.SourceWidth<=0 || command.SourceHeight<=0) return E_INVALIDARG;
+            auto texture=SpriteTextures.find(command.TextureId);
+            if (texture==SpriteTextures.end()) return E_INVALIDARG;
+            const GpuPoint* destination=points+command.PointOffset;
+            float inverseWidth=1.0f/command.SourceWidth;
+            float inverseHeight=1.0f/command.SourceHeight;
+            D2D1_MATRIX_3X2_F mapping=D2D1::Matrix3x2F(
+                (destination[1].X-destination[0].X)*inverseWidth,
+                (destination[1].Y-destination[0].Y)*inverseWidth,
+                (destination[2].X-destination[0].X)*inverseHeight,
+                (destination[2].Y-destination[0].Y)*inverseHeight,
+                destination[0].X+offsetX,destination[0].Y+offsetY);
+            D2D1_MATRIX_5X4_F tint={};
+            tint._11=color.r; tint._22=color.g; tint._33=color.b;
+            tint._44=color.a;
+            SpriteTintEffect->SetInput(0,texture->second.Get());
+            HRESULT hr=S_OK;
+            if (FAILED(hr=SpriteTintEffect->SetValue(
+                D2D1_COLORMATRIX_PROP_COLOR_MATRIX,tint))) return hr;
+            if (FAILED(hr=SpriteTintEffect->SetValue(
+                D2D1_COLORMATRIX_PROP_ALPHA_MODE,
+                D2D1_COLORMATRIX_ALPHA_MODE_STRAIGHT))) return hr;
+            SpriteContext->SetTransform(mapping);
+            D2D1_RECT_F source=D2D1::RectF(command.SourceX,command.SourceY,
+                command.SourceX+command.SourceWidth,
+                command.SourceY+command.SourceHeight);
+            D2D1_POINT_2F target=D2D1::Point2F(0.0f,0.0f);
+            SpriteContext->DrawImage(SpriteTintEffect.Get(),target,source,
+                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                D2D1_COMPOSITE_MODE_SOURCE_OVER);
+            SpriteContext->SetTransform(D2D1::Matrix3x2F::Translation(
+                offsetX,offsetY));
+            return S_OK;
+        }
+
+        HRESULT PresentGpu(int slot,const GpuDrawCommand* commands,
+            UINT commandCount,const GpuPoint* points,UINT pointCount,
+            UINT width,UINT height,float x,float y)
+        {
+            if ((commandCount&&!commands)||(pointCount&&!points)) return E_INVALIDARG;
+            HRESULT hr=EnsureSurface(Surfaces,BaseRoot.Get(),slot,width,height);
+            if (FAILED(hr)) return hr;
+            Surface& surface=Surfaces[slot]; RECT rect={0,0,(LONG)width,(LONG)height};
+            POINT offset={}; ComPtr<IDXGISurface> drawing;
+            if (FAILED(hr=surface.CompositionSurface->BeginDraw(&rect,
+                IID_PPV_ARGS(&drawing),&offset))) return hr;
+
+            HRESULT draw=S_OK;
+            ComPtr<ID3D11Texture2D> texture;
+            ComPtr<ID3D11RenderTargetView> target;
+            if (SUCCEEDED(draw=drawing.As(&texture)))
+                draw=Device->CreateRenderTargetView(texture.Get(),nullptr,&target);
+            if (SUCCEEDED(draw))
+            {
+                const float clear[4]={0,0,0,0};
+                if (Context1) {
+                    D3D11_RECT area={offset.x,offset.y,offset.x+(LONG)width,
+                        offset.y+(LONG)height};
+                    Context1->ClearView(target.Get(),clear,&area,1);
+                } else Context->ClearRenderTargetView(target.Get(),clear);
+            }
+
+            ComPtr<ID2D1Bitmap1> d2dTarget;
+            if (SUCCEEDED(draw))
+            {
+                D2D1_BITMAP_PROPERTIES1 properties=D2D1::BitmapProperties1(
+                    D2D1_BITMAP_OPTIONS_TARGET|D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+                    D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,
+                        D2D1_ALPHA_MODE_PREMULTIPLIED),96.0f,96.0f);
+                draw=SpriteContext->CreateBitmapFromDxgiSurface(drawing.Get(),
+                    &properties,&d2dTarget);
+            }
+            if (SUCCEEDED(draw))
+            {
+                SpriteContext->SetTarget(d2dTarget.Get());
+                SpriteContext->BeginDraw();
+                SpriteContext->SetTransform(D2D1::Matrix3x2F::Translation(
+                    (float)offset.x,(float)offset.y));
+                SpriteContext->PushAxisAlignedClip(D2D1::RectF(0.0f,0.0f,
+                    (float)width,(float)height),D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                for (UINT index=0;index<commandCount && SUCCEEDED(draw);++index)
+                    draw=DrawGpuCommand(commands[index],points,pointCount,
+                        (float)offset.x,(float)offset.y);
+                SpriteTintEffect->SetInput(0,nullptr);
+                SpriteContext->PopAxisAlignedClip();
+                HRESULT endDraw=SpriteContext->EndDraw();
+                SpriteContext->SetTarget(nullptr);
+                if (SUCCEEDED(draw)) draw=endDraw;
+            }
+            HRESULT end=surface.CompositionSurface->EndDraw();
+            if (FAILED(draw)) return draw;
+            if (FAILED(end)) return end;
+            return SetVisual(surface,x,y);
         }
 
         static void AddQuad(std::vector<EffectVertex>& out,float cx,float cy,
@@ -373,6 +646,17 @@ extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompCreate(HWND windo
 extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompPresent(Renderer* r,int slot,
     const void* pixels,UINT width,UINT height,UINT stride,float x,float y)
 { return r?r->Present(slot,pixels,width,height,stride,x,y):E_POINTER; }
+extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompRegisterGpuTexture(
+    Renderer* r,const void* pixels,UINT width,UINT height,UINT stride,int* textureId)
+{ return r?r->RegisterGpuTexture(pixels,width,height,stride,textureId):E_POINTER; }
+extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompUpdateGpuTexture(
+    Renderer* r,int textureId,const void* pixels,UINT width,UINT height,UINT stride)
+{ return r?r->UpdateGpuTexture(textureId,pixels,width,height,stride):E_POINTER; }
+extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompPresentGpu(Renderer* r,
+    int slot,const GpuDrawCommand* commands,UINT commandCount,const GpuPoint* points,
+    UINT pointCount,UINT width,UINT height,float x,float y)
+{ return r?r->PresentGpu(slot,commands,commandCount,points,pointCount,
+    width,height,x,y):E_POINTER; }
 extern "C" __declspec(dllexport) HRESULT __stdcall SlugcatDCompPresentEffects(Renderer* r,
     int slot,const GpuSmokeEffect* effects,UINT count,UINT width,UINT height,float x,float y)
 { return r?r->PresentEffects(slot,effects,count,width,height,x,y):E_POINTER; }

@@ -73,6 +73,8 @@
     <Compile Include="Desktop\MonitorManager.cs" />
     <Compile Include="Desktop\MouseTracker.cs" />
     <Compile Include="Desktop\MouseAttentionState.cs" />
+    <Compile Include="Desktop\LowLevelMouseInputHook.cs" />
+    <Compile Include="Desktop\MouseHookHitSnapshot.cs" />
     <Compile Include="Desktop\NativeMethods.cs" />
     <Compile Include="Desktop\WindowEnumerator.cs" />
     <Compile Include="Graphics\BodyPart.cs" />
@@ -87,6 +89,7 @@
     <Compile Include="Graphics\SlugcatGraphicsExtension.cs" />
     <Compile Include="Graphics\SlugcatPose.cs" />
     <Compile Include="Graphics\SlugcatVisualProfile.cs" />
+    <Compile Include="Graphics\SpriteCanvas.cs" />
     <Compile Include="Graphics\SpriteRenderer.cs" />
     <Compile Include="Physics\BodyChunk.cs" />
     <Compile Include="Physics\BodyChunkConnection.cs" />
