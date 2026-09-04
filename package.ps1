@@ -43,7 +43,8 @@ $releaseFiles = @(
     'System.Text.Json.dll',
     'System.Threading.Tasks.Extensions.dll',
     'System.ValueTuple.dll',
-    'THIRD-PARTY-NOTICES.md'
+    'THIRD-PARTY-NOTICES.md',
+    'licenses\Fmod5Sharp-LICENSE.txt'
 )
 $repositoryFiles = @(
     'README.md',
@@ -72,7 +73,10 @@ if (Test-Path -LiteralPath $stagingRoot) {
 New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
 
 foreach ($file in $packageFiles) {
-    Copy-Item -LiteralPath $file.Source -Destination (Join-Path $stagingRoot $file.Name)
+    $destinationPath = Join-Path $stagingRoot $file.Name
+    $destinationDirectory = Split-Path -Parent $destinationPath
+    New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
+    Copy-Item -LiteralPath $file.Source -Destination $destinationPath
 }
 
 Compress-Archive -Path (Join-Path $stagingRoot '*') -DestinationPath $archivePath -Force
@@ -91,7 +95,9 @@ finally {
     $archive.Dispose()
 }
 
-$expectedArchiveFiles = @($packageFiles | ForEach-Object { $_.Name })
+$expectedArchiveFiles = @(
+    $packageFiles | ForEach-Object { $_.Name.Replace('\', '/') }
+)
 $missingArchiveFiles = @($expectedArchiveFiles | Where-Object { $archiveFiles -notcontains $_ })
 $unexpectedArchiveFiles = @($archiveFiles | Where-Object { $expectedArchiveFiles -notcontains $_ })
 if ($missingArchiveFiles.Count -gt 0 -or $unexpectedArchiveFiles.Count -gt 0) {
