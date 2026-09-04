@@ -12,6 +12,7 @@ $referenceAssembly = Join-Path $toolRoot 'build\.NETFramework\v4.8\mscorlib.dll'
 $audioCodecRoot = Join-Path $repoRoot '.tools\audio-codecs'
 $audioCodecAssembly = Join-Path $audioCodecRoot 'Fmod5Sharp\lib\netstandard2.0\Fmod5Sharp.dll'
 $vorbisDecoderAssembly = Join-Path $audioCodecRoot 'legacy\NVorbis\lib\net35\NVorbis.dll'
+$fmod5SharpLicense = Join-Path $repoRoot 'licenses\Fmod5Sharp-LICENSE.txt'
 $msbuild = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\MSBuild.exe'
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
 
@@ -20,6 +21,9 @@ if (-not (Test-Path -LiteralPath $msbuild)) {
 }
 if (-not $SkipNative -and -not (Test-Path -LiteralPath $vswhere)) {
     throw 'Visual Studio C++ build tools were not found.'
+}
+if (-not (Test-Path -LiteralPath $fmod5SharpLicense -PathType Leaf)) {
+    throw "Fmod5Sharp license file was not found: $fmod5SharpLicense"
 }
 
 if (-not (Test-Path -LiteralPath $referenceAssembly)) {
@@ -77,6 +81,10 @@ if (-not $SkipNative) {
 # report a false parallel-build failure while both projects copy their outputs.
 & $msbuild (Join-Path $repoRoot 'RainWorldDesktopPet.sln') /t:Build /p:Configuration=$Configuration /m:1 /nologo
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+$licenseOutputDirectory = Join-Path $repoRoot "artifacts\$Configuration\licenses"
+New-Item -ItemType Directory -Force -Path $licenseOutputDirectory | Out-Null
+Copy-Item -LiteralPath $fmod5SharpLicense -Destination (Join-Path $licenseOutputDirectory 'Fmod5Sharp-LICENSE.txt') -Force
 
 if (-not $SkipTests) {
     & (Join-Path $repoRoot "artifacts\$Configuration\RainWorldDesktopPet.Tests.exe")
