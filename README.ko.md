@@ -86,7 +86,7 @@ SlugcatInMyMonitor는 64비트 Windows용 독립 실행형 데스크톱 펫입�
 
 ## 설치 및 실행
 
-1. [GitHub Releases](https://github.com/joohyunjin09/Slugcat-In-My-Monitor/releases)에서
+1. [GitHub Releases](https://github.com/leesiuuuu/Slugcat-In-My-Monitor/releases)에서
    최신 Windows 압축 파일을 내려받습니다.
 2. 압축 파일의 **모든 파일**을 한 폴더에 풉니다.
 3. `SlugcatInMyMonitor.exe`를 실행합니다.
