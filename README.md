@@ -94,7 +94,7 @@ required to run a release build.
 ## Install and run
 
 1. Download the latest Windows archive from
-   [GitHub Releases](https://github.com/joohyunjin09/Slugcat-In-My-Monitor/releases).
+   [GitHub Releases](https://github.com/leesiuuuu/Slugcat-In-My-Monitor/releases).
 2. Extract **every file** from the archive into one folder.
 3. Run `SlugcatInMyMonitor.exe`.
 4. If Rain World is not detected automatically, select the folder containing

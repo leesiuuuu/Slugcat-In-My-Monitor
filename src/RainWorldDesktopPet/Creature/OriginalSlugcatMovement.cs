@@ -879,7 +879,7 @@ namespace RainWorldDesktopPet.Creature
                     int lastFrame = crawl ? 10 : 6;
                     if (state.AnimationFrame > lastFrame) state.AnimationFrame = 0;
                     if (state.AnimationFrame == 0 &&
-                        !suppressStepSoundThisTick)
+                        !suppressStepSoundThisTick && !IsPressingIntoWall(input.X))
                     {
                         string sound = crawl ? "Slugcat_Crawling_Step" :
                             ((((int)Math.Floor(state.RunCycle)) & 1) == 0
@@ -894,6 +894,16 @@ namespace RainWorldDesktopPet.Creature
                 state.AnimationFrame++;
                 state.Stillness = MathUtil.Clamp01(state.Stillness - 0.12);
             }
+        }
+
+        private bool IsPressingIntoWall(int direction)
+        {
+            // Input forces are applied after collision, so velocity can be
+            // nonzero even when terrain prevented horizontal movement.
+            BodyChunk chest = owner.BodyChunks[0];
+            BodyChunk hips = owner.BodyChunks[1];
+            return (direction < 0 && (chest.ContactLeft || hips.ContactLeft)) ||
+                (direction > 0 && (chest.ContactRight || hips.ContactRight));
         }
 
         private void RecoverOriginalAerobic(VirtualInput input)
