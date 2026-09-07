@@ -76,6 +76,8 @@ namespace RainWorldDesktopPet.Tests
                 }
             }
 
+            Run("Blocked walking and crawling stay silent and resume away from walls",
+                BlockedMovementSuppressesFootsteps);
             Run("FixedTimeStep uses 40 Hz independently of render rate", FixedStepUsesFortyHertz);
             Run("Resume timing reset discards a one-hour suspended interval",
                 ResumeTimingResetDiscardsSuspendedInterval);
@@ -3943,6 +3945,46 @@ namespace RainWorldDesktopPet.Tests
                 "wall sprite selection ends only after the body transition completes");
         }
 
+        private static void BlockedMovementSuppressesFootsteps()
+        {
+            MonitorInfo monitor = new MonitorInfo("FOOTSTEP-MONITOR",
+                new Rectangle(0, 0, 1200, 900), new Rectangle(0, 0, 1200, 850), true);
+            DesktopCollisionWorld world = CreateSyntheticWorld(
+                new[] { monitor }, new DesktopWindowSnapshot[0]);
+            double floor = DesktopWorldTransform.ToSimulationLength(monitor.FloorY);
+            foreach (int direction in new[] { -1, 1 })
+            foreach (int posture in new[] { 0, 1 })
+            {
+                double wall = DesktopWorldTransform.ToSimulationLength(
+                    direction < 0 ? monitor.Bounds.Left : monitor.Bounds.Right);
+                Slugcat slugcat = new Slugcat(new Vec2(
+                    wall - direction * SimulationConstants.HipsChunkRadius,
+                    floor - SimulationConstants.HipsChunkRadius));
+                RecordingSoundSink sounds = new RecordingSoundSink();
+                slugcat.SetAudioSink(sounds, "blocked-footsteps");
+                VirtualInput intoWall = new VirtualInput(direction, posture, false, false);
+                for (int tick = 0; tick < 40; tick++)
+                    slugcat.Step(intoWall, world, Vec2.Zero, Vec2.Zero);
+                sounds.FootstepCount = 0;
+                for (int tick = 0; tick < 160; tick++)
+                    slugcat.Step(intoWall, world, Vec2.Zero, Vec2.Zero);
+                Equal(0, sounds.FootstepCount,
+                    "holding into wall must not repeat steps: " + direction + "/" + posture);
+
+                for (int tick = 0; tick < 60; tick++)
+                    slugcat.Step(new VirtualInput(-direction, posture, false, false),
+                        world, Vec2.Zero, Vec2.Zero);
+                True(sounds.FootstepCount > 0,
+                    "steps must resume when moving away: " + direction + "/" + posture);
+                for (int tick = 0; tick < 40; tick++)
+                    slugcat.Step(VirtualInput.Neutral, world, Vec2.Zero, Vec2.Zero);
+                sounds.FootstepCount = 0;
+                for (int tick = 0; tick < 40; tick++)
+                    slugcat.Step(VirtualInput.Neutral, world, Vec2.Zero, Vec2.Zero);
+                Equal(0, sounds.FootstepCount, "idle must remain silent");
+            }
+        }
+
         private static void OriginalBlockedWallPoseAppliesToSlugcatAndSlugpup()
         {
             MonitorInfo monitor = new MonitorInfo("WALL-POSE-MONITOR",
@@ -7103,11 +7145,20 @@ namespace RainWorldDesktopPet.Tests
         {
             public string Status { get { return "test"; } }
             public int PlayCount;
+            public int FootstepCount;
             public int StartLoopCount;
             public int StopLoopCount;
             public SoundEvent LastSound;
 
-            public void Play(SoundEvent sound) { PlayCount++; LastSound = sound; }
+            public void Play(SoundEvent sound)
+            {
+                PlayCount++;
+                LastSound = sound;
+                if (sound.Id == "Slugcat_Crawling_Step" ||
+                    sound.Id == SlugcatProfiles.White.Audio.FootstepA ||
+                    sound.Id == SlugcatProfiles.White.Audio.FootstepB)
+                    FootstepCount++;
+            }
             public void StartLoop(SoundEvent sound, string loopKey)
             {
                 StartLoopCount++;
