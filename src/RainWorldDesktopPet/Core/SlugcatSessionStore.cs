@@ -21,6 +21,7 @@ namespace RainWorldDesktopPet.Core
     {
         public string Character { get; set; }
         public string Size { get; set; }
+        public bool PupAppearance { get; set; }
         public Dictionary<string, string> DmsParts { get; set; }
         // Only explicit colors are stored; authored DMS sprites stay untinted.
         public Dictionary<string, string> CustomColors { get; set; }
@@ -37,6 +38,7 @@ namespace RainWorldDesktopPet.Core
             SlugcatSessionPet pet = new SlugcatSessionPet
             {
                 Character = loop.SelectedSlugcat.Id.ToString(), Size = loop.Size.ToString(),
+                PupAppearance = loop.Slugcat.PupAppearance,
                 DmsParts = new Dictionary<string, string>(),
                 CustomColors = new Dictionary<string, string>()
             };
@@ -53,6 +55,7 @@ namespace RainWorldDesktopPet.Core
         internal void Apply(GameLoop loop, bool invUnlocked, Action<string> warn)
         {
             loop.SetSelectedSlugcat(ResolveCharacter(invUnlocked));
+            loop.Slugcat.SetPupAppearance(PupAppearance && loop.Installation.HasMoreSlugcatsExpansion);
             SlugcatSize size;
             loop.SetSize(Enum.TryParse(Size, out size) && Enum.IsDefined(typeof(SlugcatSize), size)
                 ? size : SlugcatSize.Large);

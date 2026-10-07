@@ -32,7 +32,7 @@ uses the required files from the local installation in read-only form.
 - **Direct commands:** right-click a Slugcat to open a radial command
   wheel with Stop, Move, and Follow Me.
 - **Up to eight Slugcats:** add, select, resize, change, or remove pets independently.
-- **Automatic restore:** keep the pet roster, selected pet, characters, sizes, custom part
+- **Automatic restore:** keep the pet roster, selected pet, characters, sizes, Slugpup appearance, custom part
   colors, and DMS skins across restarts.
 - **Mouse interaction:** pick up and throw Slugcats, move food, and let pets react to the
   cursor without blocking ordinary desktop clicks.

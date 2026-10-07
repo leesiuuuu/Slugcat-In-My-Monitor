@@ -22,12 +22,15 @@ namespace RainWorldDesktopPet.Tests
                     WithStore(delegate(string path, SlugcatSessionStore store)
                     {
                         RainWorldInstallation installation = new RainWorldInstallation(Path.GetDirectoryName(path));
+                        Directory.CreateDirectory(Path.GetDirectoryName(installation.MoreSlugcatsModInfoPath));
+                        File.WriteAllText(installation.MoreSlugcatsModInfoPath, "{\"id\":\"moreslugcats\"}");
                         using (LayeredOverlayWindow first = new LayeredOverlayWindow(
                             installation, false, SlugcatId.White, null, false, store))
                         {
                             IntPtr handle = first.Handle;
                             first.SettingsSetSlugcat(SlugcatId.Rivulet);
                             first.SettingsSetSlugcatSize(SlugcatSize.Small);
+                            first.SettingsSetSlugpupAppearance(true);
                             first.SettingsAddSlugcat();
                             first.SettingsSetSlugcat(SlugcatId.Saint);
                             first.SettingsSetSlugcatSize(SlugcatSize.Normal);
@@ -46,6 +49,7 @@ namespace RainWorldDesktopPet.Tests
                                 "Overlay restart lost count or selected index.");
                             Check(second.SettingsSlugcatId == SlugcatId.Rivulet && second.SettingsSlugcatSize == SlugcatSize.Small,
                                 "First restored pet differs.");
+                            Check(second.SettingsIsSlugpupAppearance(), "Slugpup appearance was not restored.");
                             second.SettingsSelectSlugcat(1);
                             Check(second.SettingsSlugcatId == SlugcatId.Saint && second.SettingsSlugcatSize == SlugcatSize.Normal,
                                 "Second restored pet differs.");
@@ -204,6 +208,13 @@ namespace RainWorldDesktopPet.Tests
                     pet.Character = "unknown";
                     pet.Apply(target, true, null);
                     Check(target.SelectedSlugcat.Id == SlugcatId.White, "Unknown identity did not fall back.");
+                    pet.PupAppearance = true;
+                    pet.Apply(target, true, null);
+                    Check(!target.Slugcat.PupAppearance, "Missing expansion must disable the saved Slugpup option.");
+                    Directory.CreateDirectory(Path.GetDirectoryName(installation.MoreSlugcatsModInfoPath));
+                    File.WriteAllText(installation.MoreSlugcatsModInfoPath, "{\"id\":\"moreslugcats\"}");
+                    pet.Apply(target, true, null);
+                    Check(target.Slugcat.PupAppearance, "Available Slugpup option was not restored.");
                 }
             });
         }

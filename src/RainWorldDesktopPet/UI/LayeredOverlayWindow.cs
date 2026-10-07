@@ -383,7 +383,11 @@ namespace RainWorldDesktopPet.UI
                 foreach (SlugcatSessionPet pet in session.Pets)
                 {
                     AddSlugcat(pet.ResolveCharacter(invUnlocked));
-                    try { pet.Apply(gameLoop, invUnlocked, warnings.Add); }
+                    try
+                    {
+                        pet.Apply(gameLoop, invUnlocked, warnings.Add);
+                        SlugpupSettingsBridge.SynchronizeRestoredAppearance(gameLoop);
+                    }
                     catch (Exception exception)
                     {
                         Program.LogException(exception);
