@@ -98,6 +98,7 @@
     <Compile Include="Core\MathUtil.cs" />
     <Compile Include="Core\SimulationConstants.cs" />
     <Compile Include="Core\SlugcatSize.cs" />
+    <Compile Include="Core\SlugcatSessionStore.cs" />
     <Compile Include="Core\UiLocalization.cs" />
     <Compile Include="Core\Vec2.cs" />
     <Compile Include="Creature\Slugcat.cs" />

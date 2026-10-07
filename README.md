@@ -32,6 +32,8 @@ uses the required files from the local installation in read-only form.
 - **Direct commands:** right-click a Slugcat to open a radial command
   wheel with Stop, Move, and Follow Me.
 - **Up to eight Slugcats:** add, select, resize, change, or remove pets independently.
+- **Automatic restore:** keep the pet roster, selected pet, characters, sizes, Slugpup appearance, custom part
+  colors, and DMS skins across restarts.
 - **Mouse interaction:** pick up and throw Slugcats, move food, and let pets react to the
   cursor without blocking ordinary desktop clicks.
 - **Food and appetite:** place Blue Fruit or Eggbug Eggs and observe eating, refusal,
@@ -66,6 +68,14 @@ No global keyboard shortcut is registered. Empty overlay pixels remain click-thr
 normal desktop and application interaction continues behind the pets.
 
 ## Requirements
+
+Pet settings are saved on changes and normal exit to
+`%LOCALAPPDATA%\SlugcatInMyMonitor\slugcat-session.json`. The previous save is kept
+as a `.bak` file and used if the main file is damaged. Missing or disabled DMS parts
+use vanilla sprites; locked Inv pets restore as Survivor. Positions, movement,
+food, and fullness start fresh. Explicit `--slugcat` and `--dms-skin` launch options
+apply to the selected restored pet. A newer session format disables saving for
+that run to protect the file.
 
 ### Required
 

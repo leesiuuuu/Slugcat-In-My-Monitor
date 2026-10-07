@@ -501,6 +501,13 @@ namespace RainWorldDesktopPet.UI
             return EnsureSlugpupAvailability(loop) && loop.Slugcat.PupAppearance;
         }
 
+        internal static void SynchronizeRestoredAppearance(GameLoop loop)
+        {
+            Track(loop);
+            EnsureSlugpupAvailability(loop);
+            SynchronizeGraphics(loop);
+        }
+
         internal static bool SettingsCanUseSlugpupAppearance(
             this LayeredOverlayWindow app)
         {
