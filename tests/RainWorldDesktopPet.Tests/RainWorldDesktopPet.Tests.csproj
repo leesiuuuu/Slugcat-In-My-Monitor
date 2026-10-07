@@ -50,6 +50,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="SlugcatSessionTests.cs" />
     <Compile Include="AbilityParityReplayTests.cs" />
   </ItemGroup>
   <ItemGroup>
