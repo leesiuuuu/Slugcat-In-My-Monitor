@@ -29,7 +29,7 @@ namespace RainWorldDesktopPet.UI
 
     public sealed class LayeredOverlayWindow : Form
     {
-        private const int MaximumSlugcats = 8;
+        private const int MaximumSlugcats = SlugcatSessionStore.MaximumPets;
         private const int MaximumFoods = 12;
         private const int DefaultRenderFramesPerSecond = 60;
         private const int DefaultRenderIntervalMilliseconds =
@@ -45,6 +45,11 @@ namespace RainWorldDesktopPet.UI
         private const int WmHookMouseInput = 0x8002;
         private readonly RainWorldInstallation installation;
         private readonly SlugcatId startSlugcat;
+        private readonly SlugcatSessionStore sessionStore;
+        private readonly bool overrideSavedCharacter;
+        private bool sessionReady;
+        private bool sessionSaveEnabled = true;
+        private bool sessionSaveErrorShown;
         private readonly InvUnlockSettings invUnlockSettings;
         private readonly Timer renderTimer;
         private readonly NotifyIcon trayIcon;
@@ -153,7 +158,23 @@ namespace RainWorldDesktopPet.UI
 
         public LayeredOverlayWindow(RainWorldInstallation installation, bool startDebug,
             SlugcatId startSlugcat, string startDmsSkinId)
+            : this(installation, startDebug, startSlugcat, startDmsSkinId, false)
         {
+        }
+
+        public LayeredOverlayWindow(RainWorldInstallation installation, bool startDebug,
+            SlugcatId startSlugcat, string startDmsSkinId, bool overrideSavedCharacter)
+            : this(installation, startDebug, startSlugcat, startDmsSkinId, overrideSavedCharacter,
+                new SlugcatSessionStore())
+        {
+        }
+
+        internal LayeredOverlayWindow(RainWorldInstallation installation, bool startDebug,
+            SlugcatId startSlugcat, string startDmsSkinId, bool overrideSavedCharacter,
+            SlugcatSessionStore sessionStore)
+        {
+            this.sessionStore = sessionStore;
+            this.overrideSavedCharacter = overrideSavedCharacter;
             this.installation = installation;
             invUnlockSettings = new InvUnlockSettings();
             invUnlocked = invUnlockSettings.IsUnlocked;
@@ -327,17 +348,98 @@ namespace RainWorldDesktopPet.UI
             RegisterForSuspendResumeNotifications();
             collisionWorld.Refresh(Handle);
             surfaceRefreshClock.Restart();
-            AddSlugcat(startSlugcat);
+            RestoreSession();
+            if (overrideSavedCharacter) gameLoop.SetSelectedSlugcat(startSlugcat);
             if (!string.IsNullOrWhiteSpace(startDmsSkinId))
             {
                 string reason;
                 if (!gameLoop.SetDmsSkin(startDmsSkinId, out reason))
                     trayIcon.ShowBalloonTip(5000, T("DMS 스킨을 사용할 수 없음", "DMS Skin Unavailable"), reason, ToolTipIcon.Warning);
             }
+            sessionReady = true;
+            RefreshSlugcatSelectionMenu();
+            RefreshActiveSlugcatsMenu();
+            SaveSession();
+        }
+
+        private void RestoreSession()
+        {
+            SlugcatSession session = null;
+            List<string> warnings = new List<string>();
+            try
+            {
+                string warning;
+                session = sessionStore.Load(out warning);
+                if (warning != null) warnings.Add(warning);
+            }
+            catch (Exception exception)
+            {
+                Program.LogException(exception);
+                warnings.Add(exception.Message);
+                if (exception is NotSupportedException) sessionSaveEnabled = false;
+            }
+            if (session != null)
+            {
+                foreach (SlugcatSessionPet pet in session.Pets)
+                {
+                    AddSlugcat(pet.ResolveCharacter(invUnlocked));
+                    try
+                    {
+                        pet.Apply(gameLoop, invUnlocked, warnings.Add);
+                        SlugpupSettingsBridge.SynchronizeRestoredAppearance(gameLoop);
+                    }
+                    catch (Exception exception)
+                    {
+                        Program.LogException(exception);
+                        warnings.Add(exception.Message);
+                    }
+                }
+                SelectSlugcat(gameLoops[session.SelectedIndex]);
+            }
+            else AddSlugcat(startSlugcat);
+            if (warnings.Count > 0)
+            {
+                foreach (string warning in warnings)
+                    Program.LogException(new InvalidOperationException(warning));
+                trayIcon.ShowBalloonTip(5000, T("슬러그캣 복원 알림", "Slugcat Restore Notice"),
+                    sessionSaveEnabled
+                        ? T("저장 데이터 또는 스킨 복원 중 문제가 발생했습니다. 자세한 내용은 errors.log를 확인하세요.",
+                            "Saved data or skins had restoration issues. See errors.log for details.")
+                        : T("더 최신 형식의 저장 파일을 보호하기 위해 자동 저장을 중단했습니다.",
+                            "Automatic saving is disabled to protect a newer session format."),
+                    ToolTipIcon.Warning);
+            }
+        }
+
+        private void SaveSession()
+        {
+            if (!sessionReady || !sessionSaveEnabled || gameLoops.Count == 0) return;
+            try
+            {
+                SlugcatSession session = new SlugcatSession
+                {
+                    Version = SlugcatSessionStore.CurrentVersion,
+                    SelectedIndex = gameLoops.IndexOf(gameLoop),
+                    Pets = new List<SlugcatSessionPet>()
+                };
+                foreach (GameLoop loop in gameLoops) session.Pets.Add(SlugcatSessionPet.Capture(loop));
+                sessionStore.Save(session);
+                sessionSaveErrorShown = false;
+            }
+            catch (Exception exception)
+            {
+                Program.LogException(exception);
+                if (!sessionSaveErrorShown)
+                    trayIcon.ShowBalloonTip(5000, T("슬러그캣 저장 실패", "Unable to Save Slugcats"),
+                        exception.Message, ToolTipIcon.Warning);
+                sessionSaveErrorShown = true;
+            }
         }
 
         protected override void OnHandleDestroyed(EventArgs e)
         {
+            SaveSession();
+            sessionReady = false;
             renderingEnabled = false;
             renderTimer.Stop();
             UnregisterForSuspendResumeNotifications();
@@ -1010,6 +1112,7 @@ namespace RainWorldDesktopPet.UI
             if (skinEditor != null && !skinEditor.IsDisposed)
                 skinEditor.SetInvUnlocked(enable);
             RefreshActiveSlugcatsMenu();
+            SaveSession();
             trayIcon.ShowBalloonTip(5000,
                 enable
                     ? T("시크릿 캐릭터 해제", "Secret Character Unlocked")
@@ -1553,6 +1656,7 @@ namespace RainWorldDesktopPet.UI
             gameLoop = selected;
             RefreshSlugcatSelectionMenu();
             RefreshActiveSlugcatsMenu();
+            SaveSession();
         }
 
         private void RefreshSlugcatSelectionMenu()
@@ -1641,6 +1745,7 @@ namespace RainWorldDesktopPet.UI
                 {
                     RefreshSlugcatSelectionMenu();
                     RefreshActiveSlugcatsMenu();
+                    SaveSession();
                 }, invUnlocked);
                 if (applicationIcon != null) skinEditor.Icon = applicationIcon;
                 skinEditor.FormClosed += delegate { skinEditor = null; };
@@ -1684,6 +1789,7 @@ namespace RainWorldDesktopPet.UI
             }
             if (gameLoop != null) gameLoop.SetSelectedSlugcat(selectedId);
             RefreshActiveSlugcatsMenu();
+            SaveSession();
             if (skinEditor != null && !skinEditor.IsDisposed) skinEditor.RefreshFromGame();
         }
 
@@ -1787,6 +1893,7 @@ namespace RainWorldDesktopPet.UI
             gameLoop.SetSelectedSlugcat(id);
             RefreshSlugcatSelectionMenu();
             RefreshActiveSlugcatsMenu();
+            SaveSession();
             if (skinEditor != null && !skinEditor.IsDisposed) skinEditor.RefreshFromGame();
         }
 
@@ -1795,6 +1902,7 @@ namespace RainWorldDesktopPet.UI
             if (gameLoop == null) return;
             gameLoop.SetSize(size);
             PublishMouseHitSnapshot();
+            SaveSession();
         }
 
         internal void SettingsSetLanguage(UiLanguage language)

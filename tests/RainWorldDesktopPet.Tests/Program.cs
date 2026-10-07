@@ -78,6 +78,13 @@ namespace RainWorldDesktopPet.Tests
 
             Run("Blocked walking and crawling stay silent and resume away from walls",
                 BlockedMovementSuppressesFootsteps);
+            Run("Slugcat session restores eight pets, selection, sizes and explicit tints", SlugcatSessionTests.RoundTrip);
+            Run("Slugcat session preserves deletion and clamps selection", SlugcatSessionTests.DeletionAndSelection);
+            Run("Slugcat session recovers corrupt JSON from backup", SlugcatSessionTests.CorruptionRecovery);
+            Run("Slugcat session protects newer formats and rejects invalid counts", SlugcatSessionTests.FutureVersionAndLimits);
+            Run("Failed session write preserves the old file and can retry", SlugcatSessionTests.WriteFailurePreservesFile);
+            Run("Session applies to real GameLoop with missing-skin and locked-Inv fallbacks", SlugcatSessionTests.RestoreAppearanceAndFallbacks);
+            Run("Overlay add/delete/resize and selected pet survive actual window restart", SlugcatSessionTests.OverlayRestart);
             Run("FixedTimeStep uses 40 Hz independently of render rate", FixedStepUsesFortyHertz);
             Run("Resume timing reset discards a one-hour suspended interval",
                 ResumeTimingResetDiscardsSuspendedInterval);
